@@ -1,6 +1,8 @@
 # Heckler
 
-A Discord voice bot that listens in voice channels and talks back. It
+![The Heckler dashboard](docs/screenshots/dashboard-overview-dark.png)
+
+A self-hosted Discord voice bot that listens in voice channels and talks back. It
 transcribes what people say. When someone says a trigger phrase, it answers
 out loud with a gag, a sound or an action, in a cloned or designed voice.
 Admins run it from a web dashboard, and members can add their own gags,
@@ -33,7 +35,9 @@ sounds and voices from Discord, within quotas.
 
 ## Requirements
 
-- Python 3.12 and [ffmpeg](https://ffmpeg.org/) on the PATH. Developed on Linux.
+- **Linux**, or **Windows 10/11 with WSL2** (see [Windows](#windows-wsl2)). macOS isn't supported (no NVIDIA GPU).
+- Python 3.12. The installer sets it up for you with [uv](https://docs.astral.sh/uv/).
+- About 10 GB of disk: ~3 GB of packages, ~6 GB of models downloaded on the first run.
 - Hardware, roughly:
 
   | Setup | What you get |
@@ -56,15 +60,20 @@ sounds and voices from Discord, within quotas.
      Connect and Speak.
 3. **Install:**
    ```sh
-   uv venv --python 3.12 .venv
-   uv pip install --python .venv/bin/python -r requirements.txt
+   git clone https://github.com/Finforu/Heckler.git
+   cd Heckler
+   ./install.sh
    ```
-   Plain `python -m venv` plus `pip install -r requirements.txt` works too.
-4. **Configure:**
-   ```sh
-   cp .env.example .env
-   ```
-   Then set at least `DISCORD_BOT_TOKEN`. See [Configuring](#configuring).
+   The installer:
+   - installs uv if needed (it asks first), Python 3.12 and the packages, into `.venv`
+   - creates `.env` and asks for your bot token
+   - switches to listen-only mode if there's no NVIDIA GPU
+   - runs the self-check, which tests the token and the Message Content intent and prints your invite link
+
+   Run it again any time; it never overwrites your `.env`. To install by hand instead:
+   `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt`,
+   then `cp .env.example .env` and set `DISCORD_BOT_TOKEN`.
+4. **Check** (optional, the installer already did): `.venv/bin/python doctor.py` tells you what's missing or wrong, in plain words.
 5. **Run:**
    ```sh
    .venv/bin/python bot.py
@@ -78,6 +87,22 @@ sounds and voices from Discord, within quotas.
 
 The bot joins a voice channel by itself when 2+ people are in it, or with
 `/join`.
+
+### Windows (WSL2)
+
+Heckler runs on Windows inside WSL2, a real Linux that Windows runs for you. Your GPU works there too.
+
+1. **NVIDIA driver:** install the normal Windows driver from NVIDIA. Don't install any NVIDIA driver *inside* WSL; the Windows one covers it.
+2. **WSL2 with Ubuntu:** in PowerShell, as administrator, run `wsl --install -d Ubuntu`, then restart and open **Ubuntu** from the Start menu.
+3. **Inside Ubuntu**, follow [Setup](#setup) from step 3:
+   ```sh
+   sudo apt update && sudo apt install -y git curl
+   cd ~ && git clone https://github.com/Finforu/Heckler.git && cd Heckler && ./install.sh
+   ```
+   Clone into your Linux home (`~`), not under `/mnt/c/...`: the Windows drive is very slow from WSL.
+4. **Dashboard:** the login link from the log (`http://127.0.0.1:8765/...`) opens in your normal Windows browser.
+
+The bot only runs while the Ubuntu window (or WSL) is running.
 
 ## Configuring
 
@@ -223,12 +248,21 @@ the bot. Text the bot posts lives in `locales/<language>/*.json`; adding a
 language starts there. Run the tests with:
 
 ```sh
-uv pip install --python .venv/bin/python pytest
+./install.sh --dev        # or: uv pip install --python .venv/bin/python -r requirements-dev.txt
 .venv/bin/python -m pytest tests/
 ```
 
+The tests need no GPU and no models.
+
 ## Support
 
-<!-- TODO: Ko-fi / Buy Me a Coffee link -->
-If Heckler makes your calls better, you can support its development here:
-*(link coming soon)*.
+If Heckler makes your calls better, buy me a coffee, a beer or a joint 🍻
+
+| Coin | Network | Address |
+|---|---|---|
+| USDT | BNB Smart Chain (BEP-20) | `0xa5fc568e6c2161e38ea68a1892556793e5ddea61` |
+| USDT | Tron (TRC-20) | `TFPdvSW19Sk4D5YMT1Ty4Pd9R8Yb3rFgM7` |
+| USDC | BNB Smart Chain (BEP-20) | `0xa5fc568e6c2161e38ea68a1892556793e5ddea61` |
+| USDC | Ethereum (ERC-20) | `0xa5fc568e6c2161e38ea68a1892556793e5ddea61` |
+
+Send only these coins on these networks; anything else may be lost.
