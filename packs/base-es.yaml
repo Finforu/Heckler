@@ -5,6 +5,8 @@
 # El formato está descrito al principio de packs.py.
 
 format: 1
+# Las reacciones con `since: 2` llegan a los servidores que empezaron con la versión 1 al arrancar el bot.
+version: 2
 
 settings:
   voices.preview_text: ¡Hola! Así suena mi voz.
@@ -24,6 +26,45 @@ reactions:
 - name: timer
   command: [recuerdame, avisame, temporizador, alarma, pon un timer, pon una alarma]
   do: timer
+
+# "cancela todos mis temporizadores" cancela todos los tuyos; si no, el último.
+- name: cancel timer
+  command: [cancela mi temporizador, cancela el temporizador, cancela mis temporizadores,
+    cancela todos mis temporizadores, cancela la alarma, cancela mi alarma, cancela el timer, para el temporizador,
+    quita el temporizador, cancela]
+  do: timer_cancel
+  since: 2
+
+- name: time left
+  command: [cuanto falta, cuanto tiempo falta, cuanto queda, cuanto tiempo queda, mis temporizadores]
+  do: timer_list
+  since: 2
+
+- name: time
+  command: [que hora es, que horas son, dime la hora]
+  do: time
+  since: 2
+
+- name: coin
+  command: [cara o cruz, cara o sello, lanza una moneda, tira una moneda, moneda]
+  do: coin
+  since: 2
+
+# "tira dos dados", "tira un dado de 20"
+- name: dice
+  command: [tira un dado, tira los dados, tira dos dados, lanza un dado, lanza los dados, tira dados, dado, dados]
+  do: dice
+  since: 2
+
+- name: pick someone
+  command: [elige a alguien, escoge a alguien, elige a uno, elige una persona, quien va primero, a quien le toca]
+  do: pick
+  since: 2
+
+- name: repeat
+  command: [repite, repitelo, que dijiste, dilo otra vez]
+  do: repeat
+  since: 2
 
 # ── Respuestas fijas ──
 
@@ -55,6 +96,62 @@ reactions:
 - name: timer ring
   event: timer_ring
   say: '{name}, se acabó el tiempo: {said}.'
+
+- name: alarm set
+  event: alarm_set
+  say: Listo, te aviso a {said}.
+  since: 2
+
+- name: timer cancelled
+  event: timer_cancelled
+  say: ['Listo, temporizador cancelado.', 'Hecho, lo cancelé.']
+  since: 2
+
+- name: no timers
+  event: timer_none
+  say: [No tienes temporizadores., No tienes nada pendiente.]
+  since: 2
+
+- name: time left (message)
+  event: timer_left
+  say: Faltan {result} para {message}.
+  since: 2
+
+- name: time left
+  event: timer_left
+  say: Te quedan {result}.
+  since: 2
+
+- name: time now
+  event: time_now
+  say: ['{result}.', 'Ahora mismo, {result}.']
+  since: 2
+
+- name: coin result
+  event: coin_result
+  say: ['{result}.', 'Salió {result}.']
+  since: 2
+
+- name: dice result
+  event: dice_result
+  say: ['Te salió {result}.', '{result}.']
+  since: 2
+
+- name: pick result
+  event: pick_result
+  say: ['Elijo a {result}.', 'Le toca a {result}.']
+  since: 2
+
+- name: nothing to repeat
+  event: nothing_to_repeat
+  say: Todavía no he dicho nada.
+  since: 2
+
+# Cuando una pregunta va al LLM (LLM_PROVIDER en .env) y no puede responder.
+- name: llm unavailable
+  event: llm_unavailable
+  say: ['Perdón, ahora no puedo responder eso.', 'No puedo pensar ahora mismo, intenta más tarde.']
+  since: 2
 
 # ── Saludos ──
 

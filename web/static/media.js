@@ -2,7 +2,7 @@
 // Overview page. Backend: web/routes_media.py.
 import { useEffect, useRef, useState } from './vendor/hooks.js';
 import {
-  api, ConfirmButton, Empty, Field, html, Icon, mb, PageHead, S, secs, t, Tabs, toast, useId, useRunner, Waiting,
+  api, ConfirmButton, Empty, Field, html, Icon, mb, PageHead, S, secs, Slider, t, Tabs, toast, useId, useRunner, Waiting,
 } from './lib.js';
 
 function statusTone(v) {
@@ -538,6 +538,7 @@ export function Sounds({ data, gid, guild, missing, reload, control }) {
       <${Empty} title=${t('sounds.noLibraryTitle')} body=${t('sounds.noLibraryBody')} /></div>`;
   }
   const limits = data.settings.effective;
+  const cap = Number(limits['sounds.max_volume'] ?? 100);
   const upload = async (e) => {
     e.preventDefault();
     setErr(null);
@@ -581,6 +582,8 @@ export function Sounds({ data, gid, guild, missing, reload, control }) {
             <${Rename} value=${s.name} onCommit=${(n) => patch(s, { name: n }, t('sounds.renamed'))} />
             <span class="muted small tabular">${secs(s.duration_s)}</span>
             <audio controls preload="none" src=${`/api/g/${gid}/sounds/${s.id}/audio`}></audio>
+            <${SoundVolume} s=${s} cap=${cap} disabled=${busy}
+              onSave=${(v) => patch(s, { volume: v }, t('sounds.volumeSaved', { name: s.name, volume: v }))} />
             <span class="spacer"></span>
             <button class="btn small" disabled=${busy} onClick=${() => play(s)}><${Icon} name="play" size=${14} />${t('sounds.playInCall')}</button>
             <button class="btn small" aria-expanded=${making === s.id} onClick=${() => setMaking(making === s.id ? null : s.id)}>${t('sounds.makeReaction')}</button>
@@ -589,6 +592,23 @@ export function Sounds({ data, gid, guild, missing, reload, control }) {
           ${making === s.id && html`<${MakeReaction} s=${s} gid=${gid} done=${async () => { setMaking(null); await reload(); }} />`}
         </li>`)}</ul>`}
     </section>
+  </div>`;
+}
+
+// A sound's volume in percent of the level uploads are evened out to: gain_db 0 = 100%.
+export const volumePercent = (gainDb) => (gainDb === null || gainDb === undefined ? 100
+  : gainDb <= -60 ? 0 : Math.round(100 * 10 ** (gainDb / 20)));
+
+function SoundVolume({ s, cap, onSave, disabled }) {
+  const id = useId('sv');
+  const saved = volumePercent(s.gain_db);
+  const [dragging, setDragging] = useState(null);
+  const value = dragging ?? saved;
+  return html`<div class="sound-volume" title=${t('sounds.capHint', { max: cap })}>
+    <label for=${id} class="muted small">${t('sounds.volume')}</label>
+    <${Slider} id=${id} min=${0} max=${Math.max(cap, saved)} step=${5} value=${value} disabled=${disabled}
+      format=${(v) => `${v}%`} onInput=${setDragging} onChange=${(v) => { setDragging(null); if (v !== saved) onSave(v); }} />
+    ${saved > cap && html`<span class="tag warn">${t('sounds.capped', { max: cap })}</span>`}
   </div>`;
 }
 

@@ -17,7 +17,9 @@ Everything a server configures lives in one SQLite file, `data/bot.db`.
 | `dave.py` | Decrypts Discord's end-to-end encrypted voice (DAVE) for `discord-ext-voice-recv` |
 | `transcriber.py` | Speech-to-text: Whisper, Parakeet, or Parakeet checked by Whisper. Each clip can carry its server's language. Also `normalize()`, used everywhere for matching |
 | `voice_commands.py` | Finds the wake word (the bot's name, matched loosely) and what was said after it |
-| `timers.py` | Parses spoken durations (English and Spanish) for the timer command, and says them back |
+| `timers.py` | Parses spoken durations ("an hour and a half") and clock times ("at 5 pm"), English and Spanish, for timers and alarms, and says times back |
+| `helpers.py` | The little voice helpers: coin, dice, picking someone |
+| `llm.py` | Optional answers to questions: the Claude API (the `anthropic` package), or OpenAI, Ollama and LM Studio over the OpenAI chat API (aiohttp) |
 | `i18n.py`, `locales/` | Everything the bot writes, per language: `locales/<lang>/*.json`. A server's `language` setting picks it |
 | `transcripts.py` | Written transcripts, only for servers that turned them on and people who agreed |
 | `store.py` | SQLite storage: schema, migrations, settings, quotas, change notifications |
@@ -48,13 +50,17 @@ Discord voice ─▶ dave (decrypt) ─▶ listener: one utterance per speaker a
         say      ─▶ voice_library.cached() or TTSQueue("reply", library.speak), in the server's language
                     ─▶ PCM ─▶ reply queue
         sound    ─▶ sound_library.pcm() ─▶ reply queue
-        builtin  ─▶ leave / stop / timer
+        builtin  ─▶ leave / stop / timer / timer_cancel / timer_list / time / coin / dice / pick / repeat
+   (a request after the wake word that no command matches ─▶ llm.LLM.ask ─▶ say the answer)
    ─▶ per-server reply queue ─▶ voice client (lines that waited too long are dropped)
 ```
 
 Events follow the same path from `engine.for_event()`: wake, ack, leave,
-unknown, hello, bye, arrival, timer_set, timer_ring. A person's own reaction
-for an event comes before the server's general one.
+unknown, hello, bye, arrival, timer_set, timer_ring, and the helpers' replies:
+alarm_set, timer_cancelled, timer_left, timer_none, time_now, coin_result,
+dice_result, pick_result, nothing_to_repeat, llm_unavailable. A person's own
+reaction for an event comes before the server's general one. A helper reply
+the server has no reaction for falls back to "unknown".
 
 ## The store
 
@@ -77,7 +83,11 @@ Tables (every content row has a `guild_id`):
 - `voices`: clone, designed or speaker. `guild_id` NULL means a global voice.
   `status` is draft, queued, building, ready or failed.
 - `consent`: per person (global) and per purpose, `voice` or `transcripts`.
-- `sounds`, `people` (nicknames), `quota_overrides`, `quota_requests`.
+- `sounds` (with `gain_db`, each one's volume; the `sounds.max_volume`
+  setting caps them all when they play), `people` (nicknames),
+  `quota_overrides`, `quota_requests`.
+- `timers`: running timers and alarms (`ends_at` in Unix time), so they
+  survive a restart. The bot schedules them; nothing else writes them.
 - `events`: the history behind the feed and stats. Its `text` is only filled
   for people who agreed to transcripts, in servers that have them on.
   `delete_user_text()` forgets someone's words.
@@ -97,11 +107,13 @@ triggers  {"type": "phrase",  "phrases": ["good night"]}
           {"type": "event",   "event": "hello", "user_id": 123}      # user_id optional
 steps     {"type": "say", "text": "Hi {name}.", "voice_id": null | 7 | "@speaker"}
           {"type": "sound", "sound_id": 4}
-          {"type": "builtin", "action": "leave" | "stop" | "timer"}
+          {"type": "builtin", "action": "leave" | "stop" | "timer" | "timer_cancel" | "timer_list"
+                                     | "time" | "coin" | "dice" | "pick" | "repeat"}
 ```
 
 - Templates: `{name}`, `{subject}`, `{connector}`, `{to}` (swaps), `{said}`
-  and `{message}` (timers).
+  and `{message}` (timers), `{result}` (a helper's answer: the time, the
+  coin, the dice, who was picked, the time left).
 - An option that needs a missing value is skipped. That's how a timer without
   a message falls through to the "time's up" line.
 - A say step's voice is the first one set among: the step's voice → the
@@ -137,6 +149,9 @@ People's own voices (`kind = speaker`):
   top of the file). Voices and sounds are referred to by name. Audio goes in a
   `.zip` next to the YAML.
 - Imports are all or nothing, in two modes: merge, or replace.
+- Starter packs have a `version`; reactions added later say `since: N`. A
+  server seeded from an older version gets just those on the next start
+  (`upgrade_guild`), tracked by its `content.starter_version` setting.
 - `seed_guild()` gives a new server its starting content:
   - the pack named by `content.starter_pack`
   - otherwise `base-<the server's language>` (`base-en` if there's no pack

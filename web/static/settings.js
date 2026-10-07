@@ -58,6 +58,35 @@ function NumberSetting({ k, data, s, unit, min = 0, step = 1 }) {
     value=${data.settings.effective[k]} onCommit=${(v) => v !== null && s.put(k, v)} />${unit && html`<span>${unit}</span>`}</div>`;
 }
 
+// A channel of this server the bot can post in (ids are strings), or the default.
+function ChannelPicker({ id, value, channels, defaultLabel, onChange }) {
+  const list = channels || [];
+  const current = S(value);
+  const gone = current && !list.some((c) => c.id === current);
+  return html`<select id=${id} value=${current} onChange=${(e) => onChange(e.target.value || null)}>
+    <option value="">${defaultLabel}</option>
+    ${gone && html`<option value=${current}>${t('settings.missingChannel', { id: current })}</option>`}
+    ${list.map((c) => html`<option key=${c.id} value=${c.id}>${c.kind === 'voice' ? t('settings.voiceChat', { name: c.name }) : `#${c.name}`}</option>`)}
+  </select>`;
+}
+
+function Llm({ data, s, status }) {
+  const e = data.settings.effective;
+  const llm = status?.bot?.llm;
+  return html`<${Group} id="llm" title=${t('settings.llm.title')} desc=${t('settings.llm.desc')}>
+    ${llm ? html`<p class="hint llm-note">${t('settings.llm.using', { model: llm.model, service: llm.service })}
+        ${' '}${llm.cloud ? t('settings.llm.cloudNote', { service: llm.service }) : t('settings.llm.localNote')}</p>`
+      : html`<p class="hint llm-note">${t('settings.llm.notConfigured')}</p>`}
+    <${Setting} k="llm.enabled" data=${data} s=${s} label=${t('settings.llmEnabled')} hint=${t('settings.llmEnabledHint')}>
+      ${(id) => html`<${Toggle} id=${id} checked=${e['llm.enabled']} disabled=${!llm} onChange=${(v) => s.put('llm.enabled', v)} />`}<//>
+    <${Setting} k="llm.persona" data=${data} s=${s} label=${t('settings.llmPersona')} hint=${t('settings.llmPersonaHint')}>
+      ${(id) => html`<${Commit} id=${id} value=${e['llm.persona']} placeholder=${t('settings.llmPersonaPlaceholder')}
+        onCommit=${(v) => s.put('llm.persona', v)} />`}<//>
+    <${Setting} k="llm.cooldown_s" data=${data} s=${s} label=${t('settings.llmCooldown')} hint=${t('settings.llmCooldownHint')}>
+      ${NumberSetting({ k: 'llm.cooldown_s', data, s, unit: t('units.seconds') })}<//>
+  <//>`;
+}
+
 function Privacy({ data, gid, guild, control, busy, go }) {
   const on = !!(guild?.toggles?.transcripts ?? data.settings.effective['transcripts.enabled']);
   const [reviewed, setReviewed] = useState(() => !!load(privacyKey(gid), false));
@@ -153,6 +182,8 @@ export function Settings({ data, gid, guild, missing, reload, control, busy, go,
   const s = useSetting(data, gid, reload);
   const intensityId = useId('int');
   const [intensity, setIntensity] = useState(null);
+  const soundCapId = useId('cap');
+  const [soundCap, setSoundCap] = useState(null);
   if (!data) return html`<${Waiting} section="settings" missing=${missing} guild=${guild} />`;
   const e = data.settings.effective;
   const langs = data.meta.languages || [];
@@ -198,6 +229,9 @@ export function Settings({ data, gid, guild, missing, reload, control, busy, go,
       <${Setting} k="voice.default" data=${data} s=${s} label=${t('settings.defaultVoice')} hint=${t('settings.defaultVoiceHint')}>
         ${(id) => html`<${VoicePicker} id=${id} data=${data} value=${e['voice.default']} inheritLabel=${t('settings.botVoice')}
           onChange=${(v) => s.put('voice.default', v)} />`}<//>
+      ${known('sounds.max_volume') && html`<${Setting} k="sounds.max_volume" data=${data} s=${s} label=${t('settings.soundMaxVolume')} hint=${t('settings.soundMaxVolumeHint')}>
+        ${() => html`<${Slider} id=${soundCapId} min=${0} max=${400} step=${10} value=${soundCap ?? Math.round(e['sounds.max_volume'] ?? 100)}
+          format=${(v) => `${v}%`} onInput=${setSoundCap} onChange=${(v) => { setSoundCap(null); s.put('sounds.max_volume', v); }} />`}<//>`}
       <${Setting} k="sounds.max_seconds" data=${data} s=${s} label=${t('settings.soundSeconds')} hint=${t('settings.soundSecondsHint')}>
         ${NumberSetting({ k: 'sounds.max_seconds', data, s, unit: t('units.seconds'), min: 1 })}<//>
       <${Setting} k="sounds.max_mb" data=${data} s=${s} label=${t('settings.soundMb')}>
@@ -207,6 +241,18 @@ export function Settings({ data, gid, guild, missing, reload, control, busy, go,
       <${Setting} k="voices.preview_text" data=${data} s=${s} label=${t('settings.previewText')} hint=${t('settings.previewTextHint')}>
         ${(id) => html`<${Commit} id=${id} value=${e['voices.preview_text']} onCommit=${(v) => s.put('voices.preview_text', v)} />`}<//>
     <//>
+
+    ${known('notices.channel_id') && html`<${Group} id="messages" title=${t('settings.messages.title')} desc=${t('settings.messages.desc')}>
+      <${Setting} k="notices.channel_id" data=${data} s=${s} label=${t('settings.noticesChannel')} hint=${t('settings.noticesChannelHint')}>
+        ${(id) => html`<${ChannelPicker} id=${id} value=${data.settings.own['notices.channel_id']} channels=${guild?.text_channels}
+          defaultLabel=${t('settings.noticesDefault')} onChange=${(v) => s.put('notices.channel_id', v)} />`}<//>
+      <${Setting} k="time.zone" data=${data} s=${s} label=${t('settings.timeZone')}
+        hint=${t('settings.timeZoneHint', { zone: status?.bot?.time_zone || '?' })}>
+        ${(id) => html`<${Commit} id=${id} value=${data.settings.own['time.zone'] ?? ''} placeholder=${status?.bot?.time_zone || 'Europe/Madrid'}
+          onCommit=${(v) => s.put('time.zone', v || null)} />`}<//>
+    <//>`}
+
+    ${known('llm.enabled') && html`<${Llm} data=${data} s=${s} status=${status} />`}
 
     ${known('content.starter_pack') && html`<${Group} id="starter" title=${t('settings.starter.title')} desc=${t('settings.starter.desc')}>
       <${Setting} k="content.starter_pack" data=${data} s=${s} label=${t('settings.starterPack')} hint=${t('settings.starterPackHint')}>
@@ -222,8 +268,8 @@ export function Settings({ data, gid, guild, missing, reload, control, busy, go,
         ${(id) => html`<${Commit} id=${id} value=${data.settings.own['admin.role_id'] ?? ''} placeholder=${t('settings.idPlaceholder')}
           onCommit=${(v) => s.put('admin.role_id', v || null)} />`}<//>
       <${Setting} k="admin.channel_id" data=${data} s=${s} label=${t('settings.adminChannel')} hint=${t('settings.adminChannelHint')}>
-        ${(id) => html`<${Commit} id=${id} value=${data.settings.own['admin.channel_id'] ?? ''} placeholder=${t('settings.idPlaceholder')}
-          onCommit=${(v) => s.put('admin.channel_id', v || null)} />`}<//>
+        ${(id) => html`<${ChannelPicker} id=${id} value=${data.settings.own['admin.channel_id']} channels=${guild?.text_channels}
+          defaultLabel=${t('settings.adminChannelDefault')} onChange=${(v) => s.put('admin.channel_id', v)} />`}<//>
     <//>
 
     <${Advanced} data=${data} gid=${gid} s=${s} />

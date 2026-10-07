@@ -104,6 +104,11 @@ class FakeController:
                     {"id": "1200000000000000002", "name": "Gaming", "people": 1},
                     {"id": "1200000000000000003", "name": "AFK", "people": 0},
                 ],
+                "text_channels": [
+                    {"id": "1300000000000000001", "name": "general", "kind": "text"},
+                    {"id": "1300000000000000002", "name": "bot-stuff", "kind": "text"},
+                    {"id": "1200000000000000001", "name": "General", "kind": "voice"},
+                ],
                 "connected": "1200000000000000001",
                 "toggles": {"autojoin": True, "userclone": False, "record": False, "transcripts": False},
                 "reply_queue": 1, "timers": 2,
@@ -114,6 +119,7 @@ class FakeController:
                     {"id": "1200000000000000011", "name": "Lounge", "people": 0},
                     {"id": "1200000000000000012", "name": "Studio", "people": 2},
                 ],
+                "text_channels": [{"id": "1300000000000000011", "name": "lab", "kind": "text"}],
                 "connected": None,
                 "toggles": {"autojoin": False, "userclone": True, "record": False, "transcripts": False},
                 "reply_queue": 0, "timers": 0,
@@ -131,6 +137,7 @@ class FakeController:
                 "voice": ({"channel_id": channel["id"], "channel": channel["name"],
                            "people": channel["people"]} if channel else None),
                 "voice_channels": [dict(c) for c in g["voice_channels"]],
+                "text_channels": [dict(c) for c in g["text_channels"]],
                 "toggles": {**g["toggles"], **({"transcripts": bool(self.store.get_setting(int(g["id"]), "transcripts.enabled"))}
                                                 if self.store is not None else {})},
                 "reply_queue": g["reply_queue"], "timers": g["timers"],
@@ -138,12 +145,14 @@ class FakeController:
         used = 4.4 + 0.3 * len(self.tts_items) + random.uniform(-0.05, 0.05)
         return {
             "bot": {"name": self.bot_name, "user": f"{self.bot_name}#1234", "connected": True,
-                    "uptime_s": time.monotonic() - self.started, "stt_engine": "whisper"},
+                    "uptime_s": time.monotonic() - self.started, "stt_engine": "whisper", "time_zone": "Europe/Madrid",
+                    "llm": {"provider": "ollama", "model": "llama3.2", "cloud": False, "service": "Ollama"}},
             "models": [
                 {"name": "deepdml/faster-whisper-large-v3-turbo-ct2", "role": "stt",
                  "device": "cuda", "loaded": True},
                 {"name": "k2-fsa/OmniVoice", "role": "tts", "device": "cuda", "loaded": True},
                 {"name": "silero-vad", "role": "vad", "device": "cpu", "loaded": False},
+                {"name": "llama3.2", "role": "llm", "device": "ollama", "loaded": True},
             ],
             "gpu": {"name": "RTX 3070 Ti", "used_gb": round(used, 2), "total_gb": 8.0},
             "tts_queue": {"pending": len(self.tts_items), "running": self.tts_running,

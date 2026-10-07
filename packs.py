@@ -55,6 +55,12 @@ Several triggers go in a list instead: `triggers: [{phrase: hello}, {swap: coffe
 Optional per reaction: kind (gag / sound / command / response; guessed from
 the trigger), voice, by, enabled, status, cooldown_s, chance, created_by.
 
+Starter packs (packs/base-*.yaml) carry a `version`, and reactions added
+after the first one say `since: <version>`. A server seeded from an older
+version gets just those newer reactions when the bot starts (upgrade_guild),
+so new voice commands reach existing servers without touching anything the
+admins changed or deleted.
+
 Import modes: merge (default) updates reactions with the same kind and name,
 sounds and voices with the same name, and adds the rest. replace first
 deletes the server's reactions, and its sounds, voices, settings and
@@ -72,6 +78,8 @@ import reactions as rules
 
 ROOT = Path(__file__).resolve().parent
 FORMAT = 1
+# Per server: the version of its starter pack it has (see upgrade_guild). Not exported.
+STARTER_VERSION = "content.starter_version"
 TRIGGER_KEYS = ("phrase", "swap", "command", "slash", "event")
 KIND_FOR_TRIGGER = {"phrase": "gag", "swap": "gag", "command": "command", "slash": "sound", "event": "response"}
 VOICE_FIELDS = ("kind", "owner_user_id", "ref_text", "instruct", "speed", "num_step", "gain_db", "tags", "language")
@@ -200,7 +208,7 @@ def pack_data(store, guild_id: int, *, include_personal: bool = True, base_dir: 
     sound_names = {s["id"]: s["name"] for s in sounds}
 
     data: dict = {"format": FORMAT}
-    settings = store.settings(guild_id, effective=False)
+    settings = {k: v for k, v in store.settings(guild_id, effective=False).items() if k != STARTER_VERSION}
     if settings:
         data["settings"] = settings
     if include_personal:
@@ -394,123 +402,124 @@ def import_pack(store, guild_id: int, path: str | Path, *, mode: str = "merge", 
         raise ValueError("mode must be merge or replace")
     path = Path(path)
     data = load(path)
-    media_dir = Path(media_dir) if media_dir else base_dir / "data" / "media" / str(guild_id)
     zip_path = path.with_suffix(".zip")
     archive = zipfile.ZipFile(zip_path) if zip_path.exists() else None
-    warnings: list[str] = []
-    counts = {"reactions": 0, "sounds": 0, "voices": 0, "people": 0, "settings": 0}
-    resolve = _Resolver(store, guild_id, warnings)
     try:
-        with store.batch():
-            if mode == "replace":
-                for row in store.list_reactions(guild_id):
-                    store.delete_reaction(row["id"])
-                if "sounds" in data:
-                    for s in store.list_sounds(guild_id):
-                        store.delete_sound(s["id"])
-                if "voices" in data:
-                    for v in store.list_voices(guild_id, include_global=False):
-                        if v["kind"] != "speaker":
-                            store.delete_voice(v["id"])
-                if "settings" in data:
-                    for key in store.settings(guild_id, effective=False):
-                        store.delete_setting(guild_id, key)
-                if "people" in data:
-                    for p in store.list_people(guild_id):
-                        store.set_person(guild_id, p["user_id"], nickname=None)
-
-            for key, value in (data.get("settings") or {}).items():
-                store.set_setting(guild_id, str(key), value)
-                counts["settings"] += 1
-
-            for p in data.get("people") or []:
-                store.set_person(guild_id, int(p["user_id"]), nickname=p.get("nickname"))
-                counts["people"] += 1
-
-            for v in data.get("voices") or []:
-                where = f"voice {v.get('name')!r}"
-                if not v.get("name"):
-                    raise ValueError("every voice needs a name")
-                fields = {k: v[k] for k in VOICE_FIELDS if k in v}
-                source = _extract(archive, v.get("file"), media_dir, base_dir, where, warnings)
-                ref = _extract(archive, v.get("ref_file"), media_dir, base_dir, where, warnings)
-                if source:
-                    fields["source_path"] = source
-                if ref:
-                    fields["ref_path"] = ref
-                # Prompts aren't packed: (re)build from what came in.
-                fields.update(status="queued", prompt_path=None, prompt_hash=None, error=None)
-                existing = next((x for x in store.list_voices(guild_id, include_global=False)
-                                 if x["name"].casefold() == str(v["name"]).casefold()), None)
-                if existing:
-                    store.update_voice(existing["id"], **fields)
-                else:
-                    store.add_voice(str(v["name"]), guild_id=guild_id, **fields)
-                counts["voices"] += 1
-
-            for s in data.get("sounds") or []:
-                where = f"sound {s.get('name')!r}"
-                if not s.get("name"):
-                    raise ValueError("every sound needs a name")
-                fields = {k: s[k] for k in ("duration_s", "gain_db", "enabled", "created_by") if k in s}
-                file = _extract(archive, s.get("file"), media_dir, base_dir, where, warnings)
-                existing = store.find_sound(guild_id, str(s["name"]))
-                if existing:
-                    store.update_sound(existing["id"], **fields, **({"path": file} if file else {}))
-                elif file:
-                    store.add_sound(guild_id, str(s["name"]), file, **fields)
-                else:
-                    warnings.append(f"{where}: no audio file, skipped")
-                    continue
-                counts["sounds"] += 1
-
-            existing = {(r["kind"], r["name"]): r["id"] for r in store.list_reactions(guild_id)}
-            for i, r in enumerate(data.get("reactions") or []):
-                if not isinstance(r, dict) or not r.get("name"):
-                    raise ValueError(f"reaction #{i + 1}: needs a name")
-                where = f"reaction {r['name']!r}"
-                if "triggers" in r:
-                    triggers = [_trigger_from_yaml(t, where) for t in r["triggers"] or []]
-                else:
-                    triggers = [_trigger_from_yaml(r, where)]
-                if not triggers:
-                    raise ValueError(f"{where}: no triggers")
-                fields = dict(
-                    triggers=triggers,
-                    options=_options_from_yaml(r, where, resolve),
-                    voice_id=resolve.voice(r.get("voice"), where),
-                    by_users=([r["by"]] if isinstance(r["by"], (str, int)) else list(r["by"])) if r.get("by") else None,
-                    enabled=bool(r.get("enabled", True)),
-                    status=r.get("status", "approved"),
-                    cooldown_s=r.get("cooldown_s"),
-                    chance=float(r.get("chance", 1.0)),
-                    created_by=r.get("created_by"),
-                )
-                kind = r.get("kind") or KIND_FOR_TRIGGER[triggers[0]["type"]]
-                try:
-                    if (kind, r["name"]) in existing:
-                        store.update_reaction(existing[(kind, r["name"])], **fields)
-                    else:
-                        existing[(kind, r["name"])] = store.add_reaction(guild_id, kind, str(r["name"]), **fields)
-                except ValueError as e:
-                    raise ValueError(f"{where}: {e}") from None
-                counts["reactions"] += 1
+        return import_data(store, guild_id, data, mode=mode, archive=archive, media_dir=media_dir, base_dir=base_dir)
     finally:
         if archive is not None:
             archive.close()
+
+
+def import_data(store, guild_id: int, data: dict, *, mode: str = "merge", archive: zipfile.ZipFile | None = None,
+                media_dir: Path | None = None, base_dir: Path = ROOT) -> dict:
+    """import_pack for a pack already loaded (its zip, if any, open as `archive`)."""
+    media_dir = Path(media_dir) if media_dir else base_dir / "data" / "media" / str(guild_id)
+    warnings: list[str] = []
+    counts = {"reactions": 0, "sounds": 0, "voices": 0, "people": 0, "settings": 0}
+    resolve = _Resolver(store, guild_id, warnings)
+    with store.batch():
+        if mode == "replace":
+            for row in store.list_reactions(guild_id):
+                store.delete_reaction(row["id"])
+            if "sounds" in data:
+                for s in store.list_sounds(guild_id):
+                    store.delete_sound(s["id"])
+            if "voices" in data:
+                for v in store.list_voices(guild_id, include_global=False):
+                    if v["kind"] != "speaker":
+                        store.delete_voice(v["id"])
+            if "settings" in data:
+                for key in store.settings(guild_id, effective=False):
+                    store.delete_setting(guild_id, key)
+            if "people" in data:
+                for p in store.list_people(guild_id):
+                    store.set_person(guild_id, p["user_id"], nickname=None)
+
+        for key, value in (data.get("settings") or {}).items():
+            store.set_setting(guild_id, str(key), value)
+            counts["settings"] += 1
+
+        for p in data.get("people") or []:
+            store.set_person(guild_id, int(p["user_id"]), nickname=p.get("nickname"))
+            counts["people"] += 1
+
+        for v in data.get("voices") or []:
+            where = f"voice {v.get('name')!r}"
+            if not v.get("name"):
+                raise ValueError("every voice needs a name")
+            fields = {k: v[k] for k in VOICE_FIELDS if k in v}
+            source = _extract(archive, v.get("file"), media_dir, base_dir, where, warnings)
+            ref = _extract(archive, v.get("ref_file"), media_dir, base_dir, where, warnings)
+            if source:
+                fields["source_path"] = source
+            if ref:
+                fields["ref_path"] = ref
+            # Prompts aren't packed: (re)build from what came in.
+            fields.update(status="queued", prompt_path=None, prompt_hash=None, error=None)
+            existing = next((x for x in store.list_voices(guild_id, include_global=False)
+                             if x["name"].casefold() == str(v["name"]).casefold()), None)
+            if existing:
+                store.update_voice(existing["id"], **fields)
+            else:
+                store.add_voice(str(v["name"]), guild_id=guild_id, **fields)
+            counts["voices"] += 1
+
+        for s in data.get("sounds") or []:
+            where = f"sound {s.get('name')!r}"
+            if not s.get("name"):
+                raise ValueError("every sound needs a name")
+            fields = {k: s[k] for k in ("duration_s", "gain_db", "enabled", "created_by") if k in s}
+            file = _extract(archive, s.get("file"), media_dir, base_dir, where, warnings)
+            existing = store.find_sound(guild_id, str(s["name"]))
+            if existing:
+                store.update_sound(existing["id"], **fields, **({"path": file} if file else {}))
+            elif file:
+                store.add_sound(guild_id, str(s["name"]), file, **fields)
+            else:
+                warnings.append(f"{where}: no audio file, skipped")
+                continue
+            counts["sounds"] += 1
+
+        existing = {(r["kind"], r["name"]): r["id"] for r in store.list_reactions(guild_id)}
+        for i, r in enumerate(data.get("reactions") or []):
+            if not isinstance(r, dict) or not r.get("name"):
+                raise ValueError(f"reaction #{i + 1}: needs a name")
+            where = f"reaction {r['name']!r}"
+            if "triggers" in r:
+                triggers = [_trigger_from_yaml(t, where) for t in r["triggers"] or []]
+            else:
+                triggers = [_trigger_from_yaml(r, where)]
+            if not triggers:
+                raise ValueError(f"{where}: no triggers")
+            fields = dict(
+                triggers=triggers,
+                options=_options_from_yaml(r, where, resolve),
+                voice_id=resolve.voice(r.get("voice"), where),
+                by_users=([r["by"]] if isinstance(r["by"], (str, int)) else list(r["by"])) if r.get("by") else None,
+                enabled=bool(r.get("enabled", True)),
+                status=r.get("status", "approved"),
+                cooldown_s=r.get("cooldown_s"),
+                chance=float(r.get("chance", 1.0)),
+                created_by=r.get("created_by"),
+            )
+            kind = r.get("kind") or KIND_FOR_TRIGGER[triggers[0]["type"]]
+            try:
+                if (kind, r["name"]) in existing:
+                    store.update_reaction(existing[(kind, r["name"])], **fields)
+                else:
+                    existing[(kind, r["name"])] = store.add_reaction(guild_id, kind, str(r["name"]), **fields)
+            except ValueError as e:
+                raise ValueError(f"{where}: {e}") from None
+            counts["reactions"] += 1
     return {**counts, "warnings": warnings}
 
 
 DEFAULT_STARTER = "base-en"
 
 
-def seed_guild(store, guild_id: int, *, packs_dir: Path = ROOT / "packs") -> str:
-    """Give a server with no reactions its starting content, and say what was done.
-
-    The setting content.starter_pack picks a pack under packs/ (e.g. "base-es")
-    or "none". Unset: base-<the server's language> (see i18n), else base-en."""
-    if store.list_reactions(guild_id):
-        return "kept: the server already has content"
+def starter_pack(store, guild_id: int, packs_dir: Path = ROOT / "packs") -> Path | str:
+    """The server's starter pack file, or why there's none (a str)."""
     choice = store.get_setting(guild_id, "content.starter_pack")
     if choice is None:
         import i18n
@@ -526,9 +535,54 @@ def seed_guild(store, guild_id: int, *, packs_dir: Path = ROOT / "packs") -> str
     path = packs_dir / (choice if choice.endswith(".yaml") else f"{choice}.yaml")
     if not path.is_file():
         return f"nothing: no pack {path.name} in {packs_dir}"
-    result = import_pack(store, guild_id, path)
+    return path
+
+
+def seed_guild(store, guild_id: int, *, packs_dir: Path = ROOT / "packs") -> str:
+    """Give a server with no reactions its starting content, and say what was done.
+    A server that has some gets what its starter pack added since (upgrade_guild).
+
+    The setting content.starter_pack picks a pack under packs/ (e.g. "base-es")
+    or "none". Unset: base-<the server's language> (see i18n), else base-en."""
+    if store.list_reactions(guild_id):
+        return upgrade_guild(store, guild_id, packs_dir=packs_dir)
+    path = starter_pack(store, guild_id, packs_dir)
+    if isinstance(path, str):
+        return path
+    data = load(path)
+    with store.batch():
+        result = import_pack(store, guild_id, path)
+        store.set_setting(guild_id, STARTER_VERSION, int(data.get("version", 1)))
     note = f" ({len(result['warnings'])} warnings)" if result["warnings"] else ""
     return f"pack {path.stem}: {result['reactions']} reactions{note}"
+
+
+def upgrade_guild(store, guild_id: int, *, packs_dir: Path = ROOT / "packs") -> str:
+    """Add the reactions the server's starter pack gained since the version
+    it has (`since:` newer than its content.starter_version, 1 when unset),
+    unless it already has one of the same kind and name."""
+    path = starter_pack(store, guild_id, packs_dir)
+    if isinstance(path, str):
+        return "kept: the server already has content"
+    data = load(path)
+    version = int(data.get("version", 1))
+    have = int(store.get_setting(guild_id, STARTER_VERSION) or 1)
+    if version <= have:
+        return "kept: the server already has content"
+    existing = {(r["kind"], r["name"]) for r in store.list_reactions(guild_id)}
+    new = []
+    for r in data.get("reactions") or []:
+        if not isinstance(r, dict) or int(r.get("since", 1)) <= have:
+            continue
+        triggers = r.get("triggers") or [r]
+        first = next((k for k in TRIGGER_KEYS if k in triggers[0]), None) if isinstance(triggers[0], dict) else None
+        kind = r.get("kind") or KIND_FOR_TRIGGER.get(first, "gag")
+        if (kind, r.get("name")) not in existing:
+            new.append(r)
+    with store.batch():
+        result = import_data(store, guild_id, {"reactions": new}) if new else {"reactions": 0, "warnings": []}
+        store.set_setting(guild_id, STARTER_VERSION, version)
+    return f"pack {path.stem} v{version}: added {result['reactions']} new reactions"
 
 
 def main() -> None:

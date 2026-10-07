@@ -13,6 +13,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Must be set before torch touches CUDA: less fragmentation, so the memory
 # OmniVoice frees can actually be reused (by Whisper, when STT_ENGINE=whisper).
@@ -20,12 +21,15 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import discord
 import soundfile as sf
+from discord import app_commands
 from discord.ext import commands, voice_recv
 from dotenv import load_dotenv
 
 import content_commands
 import dave
+import helpers
 import i18n
+import llm
 import packs
 import timers
 from events import bus
@@ -135,6 +139,13 @@ engine = ReactionEngine(store)
 # built once, and every line generated once (cached on disk, data/).
 library = VoiceLibrary(store, ROOT / "data", language=LANGUAGES[0] if LANGUAGES else None)
 sounds = SoundLibrary(store, ROOT / "data")  # soundboard clips
+# Optional: questions after the wake word answered by an LLM (LLM_PROVIDER in .env).
+try:
+    llm_config = llm.config_from_env()
+except ValueError as e:
+    log.warning("No LLM answers: %s", e)
+    llm_config = None
+assistant = llm.LLM(llm_config) if llm_config else None
 # !userclone: per guild, gags answer in the speaker's own voice instead of
 # the bot's (once they've consented and their voice is built). Off by default.
 userclone: dict[int, bool] = {}
@@ -147,6 +158,8 @@ class Bot(commands.Bot):
     async def close(self) -> None:
         if dashboard_runner is not None:
             await dashboard_runner.cleanup()  # closes open dashboard tabs' connections
+        if assistant is not None:
+            await assistant.close()
         await super().close()
 
     async def setup_hook(self) -> None:
@@ -269,6 +282,7 @@ async def on_ready():
     if pruned:
         log.info("Dropped %d history events older than %d days", pruned, EVENT_HISTORY_DAYS)
     import_content(bot.guilds)
+    restore_timers()
     for guild in bot.guilds:
         await sync_slash_commands(guild)
         await auto_join(guild)
@@ -284,8 +298,8 @@ async def on_guild_join(guild):
 
 def import_content(guilds) -> None:
     """A server seen for the first time gets its starter content: the pack in
-    setting content.starter_pack, or this install's old gags.py & co. if they
-    still exist (servers that already have content are left alone)."""
+    setting content.starter_pack (base-<language> by default). Servers that
+    already have content only get what their starter pack added since."""
     for guild in guilds:
         result = packs.seed_guild(store, guild.id)
         if not result.startswith("kept"):
@@ -432,9 +446,11 @@ async def _handle_utterance(u: Utterance, voice_channel, text_channel) -> None:
     # gag, not a command the bot didn't understand.
     if command and not order and gag:
         command = None
+    # Not a command: a question for the LLM, where there is one.
+    asking = bool(command and command.action != "wake" and order is None and can_ask(guild))
     if command:
         entry["matched"] = {"kind": "command", "name": order.reaction["name"] if order else
-                            ("wake" if command.action == "wake" else "not understood")}
+                            ("wake" if command.action == "wake" else "question" if asking else "not understood")}
     elif gag:
         entry["matched"] = {"kind": gag.reaction["kind"], "name": gag.reaction["name"]}
         entry["reply"] = gag.text or None
@@ -452,6 +468,8 @@ async def _handle_utterance(u: Utterance, voice_channel, text_channel) -> None:
     who = {"user_id": u.user_id, "display_name": u.user_name}
     if command and command.action == "wake":
         await respond(guild, "wake", **who)  # "¿Más trabajo?"
+    elif asking:
+        await answer_question(guild, text, **who)
     elif command and order is None:
         await respond(guild, "unknown", **who)  # "¿Qué? No entendí."
     elif command:
@@ -474,12 +492,21 @@ def speaker_name(guild_id: int, user_id: int, display_name: str) -> str:
 
 
 async def respond(guild, event: str, *, user_id: int | None = None, display_name: str = "",
-                  values: dict | None = None) -> list[asyncio.Future]:
+                  values: dict | None = None, fallback: str | None = "unknown") -> list[asyncio.Future]:
     """React to an event (wake, ack, hello, timer_ring...): the person's own
-    reaction if they have one, otherwise the server's."""
+    reaction if they have one, otherwise the server's. A helper's reply
+    (time_now, coin_result...) the server has no reaction for falls back to
+    `fallback` ("unknown": "Sorry, I didn't get that")."""
     name = speaker_name(guild.id, user_id, display_name) if user_id else ""
     m = engine.for_event(guild.id, event, user_id, display_name, name, values)
+    if m is None and fallback and event in HELPER_EVENTS:
+        m = engine.for_event(guild.id, fallback, user_id, display_name, name, values)
     return await perform(m, guild, user_id=user_id, display_name=display_name)
+
+
+# Replies to the helpers. Servers seeded before a helper existed may lack one.
+HELPER_EVENTS = {"alarm_set", "timer_cancelled", "timer_left", "timer_none", "time_now", "coin_result",
+                 "dice_result", "pick_result", "nothing_to_repeat", "llm_unavailable"}
 
 
 async def perform(m: Match | None, guild, *, user_id: int | None = None, display_name: str = "",
@@ -612,14 +639,59 @@ async def run_builtin(action: str, guild, user_id: int | None, display_name: str
                 pass
         await disconnect(guild, pause_autojoin=True)
     elif action == "timer":
-        parsed = timers.parse_timer(text, lang_of(guild))
+        lang = lang_of(guild)
+        event, parsed = "timer_set", timers.parse_timer(text, lang)  # "in 10 minutes"
+        if parsed is None:
+            event, parsed = "alarm_set", timers.parse_clock(text, lang, guild_now(guild))  # "at 5 pm"
         member = guild.get_member(user_id) if user_id else None
         if parsed is None or member is None:
             await respond(guild, "unknown", **who)
             return
         seconds, said, message = parsed
-        start_timer(guild, seconds, said, message, member)
-        await respond(guild, "timer_set", **who, values={"said": said})  # "OK, I'll remind you in 5 minutes."
+        if start_timer(guild, seconds, said, message, member) is None:
+            log.info("Not setting a timer for %s: they (or the server) have too many", display_name)
+            await respond(guild, "unknown", **who)
+            return
+        await respond(guild, event, **who, values={"said": said})  # "OK, I'll remind you in 5 minutes."
+    elif action == "timer_cancel":
+        mine = store.list_timers(guild.id, user_id=user_id) if user_id else []
+        if not mine:
+            await respond(guild, "timer_none", **who)
+            return
+        # "cancel all my timers" cancels every one; otherwise the one set last.
+        words = set(normalize(text).split())
+        chosen = mine if words & {"all", "every", "todos", "todas"} else [max(mine, key=lambda t: t["id"])]
+        for timer in chosen:
+            cancel_timer(timer["id"])
+        await respond(guild, "timer_cancelled", **who, values={"said": chosen[-1]["said"], "message": chosen[-1]["message"]})
+    elif action == "timer_list":
+        mine = store.list_timers(guild.id, user_id=user_id) if user_id else []
+        if not mine:
+            await respond(guild, "timer_none", **who)
+            return
+        soonest = mine[0]
+        left = timers.spoken_left(soonest["ends_at"] - time.time(), lang_of(guild))
+        await respond(guild, "timer_left", **who,
+                      values={"result": left, "said": soonest["said"], "message": soonest["message"]})
+    elif action == "time":
+        now = guild_now(guild)
+        await respond(guild, "time_now", **who, values={"result": timers.clock_text(now, lang_of(guild))})
+    elif action == "coin":
+        await respond(guild, "coin_result", **who, values={"result": helpers.flip(lang_of(guild))})
+    elif action == "dice":
+        count, sides = helpers.parse_dice(text)
+        await respond(guild, "dice_result", **who, values={"result": helpers.roll(count, sides, lang_of(guild))})
+    elif action == "pick":
+        names = [speaker_name(guild.id, m.id, m.display_name) for m in people_in(vc.channel)]
+        chosen = helpers.pick(names)
+        if chosen:
+            await respond(guild, "pick_result", **who, values={"result": chosen})
+    elif action == "repeat":
+        last = last_said.get(guild.id)
+        if last is None:
+            await respond(guild, "nothing_to_repeat", **who)
+        else:
+            say(guild, *last)
     elif action == "stop":
         clear_replies(guild)
         if is_busy(vc):
@@ -706,6 +778,8 @@ class Reply:
 reply_queues: dict[int, asyncio.Queue] = {}
 reply_workers: dict[int, asyncio.Task] = {}
 recent_lines: defaultdict[int, deque] = defaultdict(lambda: deque(maxlen=8))
+# Per guild: the last thing played, (text, pcm), for "say that again".
+last_said: dict[int, tuple[str, bytes]] = {}
 
 
 # The live-feed entry (events.py) of the utterance being handled, so the
@@ -754,6 +828,7 @@ async def _play_replies(guild, queue: asyncio.Queue) -> None:
         play_audio(vc, discord.PCMAudio(io.BytesIO(reply.pcm)), done=finished.set)
         await finished.wait()
         line[1] = time.monotonic()
+        last_said[guild.id] = (reply.text, reply.pcm)
         reply.played.set_result(True)
 
 
@@ -829,6 +904,66 @@ async def say_text(guild, text: str | None, voice_id: int | None = None) -> None
     line = await speech(text, voice_id, guild, None, "")
     if line is not None:
         say(guild, text, line[0])
+
+
+# ---------------------------------------------------------------------- LLM
+# Questions after the wake word that aren't a command ("Heckler, how far is
+# the moon?") go to the LLM, if this install has one (LLM_PROVIDER, llm.py)
+# and the server has it on (setting llm.enabled).
+last_question: dict[tuple[int, int], float] = {}
+
+
+def can_ask(guild) -> bool:
+    return assistant is not None and bool(store.get_setting(guild.id, "llm.enabled"))
+
+
+def question_wait(guild_id: int, user_id: int) -> float:
+    """Seconds before this person may ask again (setting llm.cooldown_s); 0 = now."""
+    cooldown = float(store.get_setting(guild_id, "llm.cooldown_s") or 0)
+    return max(0.0, cooldown - (time.monotonic() - last_question.get((guild_id, user_id), -1e9)))
+
+
+async def ask_llm(guild, question: str, user_id: int, display_name: str) -> str | None:
+    last_question[(guild.id, user_id)] = time.monotonic()
+    return await assistant.ask(question, guild_id=guild.id, speaker=speaker_name(guild.id, user_id, display_name),
+                               bot=bot_name(), language=lang_of(guild),
+                               persona=str(store.get_setting(guild.id, "llm.persona") or ""))
+
+
+async def answer_question(guild, question: str, *, user_id: int, display_name: str) -> None:
+    """Ask the LLM and say its answer, in the server's default voice."""
+    who = {"user_id": user_id, "display_name": display_name}
+    if question_wait(guild.id, user_id) > 0:
+        log.info("Not asking the LLM for %s yet: llm.cooldown_s", display_name)
+        return
+    answer = await ask_llm(guild, question, user_id, display_name)
+    if not answer:
+        await respond(guild, "llm_unavailable", **who)  # "Sorry, I can't answer that right now."
+        return
+    feed_update(reply=answer)
+    line = await speech(answer, store.get_setting(guild.id, "voice.default"), guild, user_id, display_name)
+    if line is None:
+        feed_update(outcome="failed")
+        return
+    feed_update(voice=line[1])
+    say(guild, answer, line[0])
+
+
+@bot.hybrid_command(name="ask", description="Ask the bot anything (when this bot has an LLM set up)")
+async def ask_command(ctx, *, question: str):
+    if ctx.guild is None:
+        return
+    if not can_ask(ctx.guild):
+        return await reply(ctx, "ask.off")
+    wait = question_wait(ctx.guild.id, ctx.author.id)
+    if wait > 0:
+        return await reply(ctx, "ask.wait", seconds=f"{wait:.0f}")
+    await ctx.defer()
+    answer = await ask_llm(ctx.guild, question, ctx.author.id, ctx.author.display_name)
+    if not answer:
+        return await reply(ctx, "ask.failed")
+    quoted = " ".join(question.split())[:200]
+    await ctx.send(f"> {quoted}\n{answer}", allowed_mentions=discord.AllowedMentions.none())
 
 
 # ------------------------------------------------------------------ presence
@@ -925,37 +1060,125 @@ async def on_voice_state_update(member, before, after):
 
 
 # -------------------------------------------------------------------- timers
-@dataclass
-class Timer:
-    ends_at: float
-    who: str
-    said: str
-    message: str
-    task: asyncio.Task | None = None
+# Timers live in the store, so they survive a restart. Each one waiting has
+# a task here that sleeps until it rings.
+MAX_TIMERS_PER_PERSON = 10
+MAX_TIMERS_PER_SERVER = 50
+# After a restart, timers that came due while the bot was off still ring if
+# they're at most this late; older ones are dropped.
+LATE_TIMER_GRACE_S = 3600
+
+timer_tasks: dict[int, asyncio.Task] = {}
+timers_restored = False
 
 
-guild_timers: defaultdict[int, list] = defaultdict(list)
+def guild_now(guild) -> datetime:
+    """The time in the server's time zone (setting time.zone), else the machine's."""
+    zone = store.get_setting(guild.id, "time.zone")
+    try:
+        return datetime.now(ZoneInfo(zone)) if zone else datetime.now().astimezone()
+    except (ZoneInfoNotFoundError, ValueError):
+        log.warning("Unknown time zone %r in %s; using the machine's", zone, guild)
+        return datetime.now().astimezone()
 
 
-def start_timer(guild, seconds: float, said: str, message: str, member) -> Timer:
+def start_timer(guild, seconds: float, said: str, message: str, member) -> int | None:
+    """Set a timer. Its id, or None when that person (or the server) already has too many."""
+    if len(store.list_timers(guild.id, user_id=member.id)) >= MAX_TIMERS_PER_PERSON \
+            or len(store.list_timers(guild.id)) >= MAX_TIMERS_PER_SERVER:
+        return None
     name = speaker_name(guild.id, member.id, member.display_name)
-    timer = Timer(time.monotonic() + seconds, name, said, message)
-
-    async def ring() -> None:
-        try:
-            await asyncio.sleep(seconds)
-            log.info("Timer for %s: %s (%s)", name, said, message or "-")
-            # "{name}, {message}." or, without a message, "{name}, ya pasaron {said}."
-            await respond(guild, "timer_ring", user_id=member.id, display_name=member.display_name,
-                          values={"said": said, "message": message})
-        finally:
-            if timer in guild_timers[guild.id]:
-                guild_timers[guild.id].remove(timer)
-
-    timer.task = asyncio.create_task(ring())
-    guild_timers[guild.id].append(timer)
+    timer_id = store.add_timer(guild.id, member.id, name, said, message, time.time() + seconds)
+    schedule_timer(store.get_timer(timer_id))
     log.info("Timer set by %s: %s (%s)", name, said, message or "-")
-    return timer
+    return timer_id
+
+
+def schedule_timer(row: dict) -> None:
+    async def ring() -> None:
+        await asyncio.sleep(max(0.0, row["ends_at"] - time.time()))
+        # Forgotten before it rings: a cancelled task (shutting down) keeps it for next time.
+        timer_tasks.pop(row["id"], None)
+        store.delete_timer(row["id"])
+        try:
+            await ring_timer(row)
+        except Exception:
+            log.exception("Ringing timer %s failed", row["id"])
+
+    timer_tasks[row["id"]] = asyncio.create_task(ring())
+
+
+def cancel_timer(timer_id: int) -> None:
+    task = timer_tasks.pop(timer_id, None)
+    if task is not None:
+        task.cancel()
+    store.delete_timer(timer_id)
+
+
+def restore_timers() -> None:
+    """Pick the saved timers back up after a (re)start. Once per run."""
+    global timers_restored
+    if timers_restored:
+        return
+    timers_restored = True
+    now = time.time()
+    for row in store.list_timers():
+        if row["id"] in timer_tasks or bot.get_guild(row["guild_id"]) is None:
+            continue
+        if now - row["ends_at"] > LATE_TIMER_GRACE_S:
+            log.info("Dropping %s's timer (%s): it was due while the bot was off", row["who"], row["said"])
+            store.delete_timer(row["id"])
+            continue
+        schedule_timer(row)
+    if timer_tasks:
+        log.info("%d timers picked back up", len(timer_tasks))
+
+
+async def ring_timer(row: dict) -> None:
+    """Say it in the call when the person is in it with the bot; otherwise
+    (or when the bot can't talk) ping them in writing."""
+    guild = bot.get_guild(row["guild_id"])
+    if guild is None:
+        return
+    member = guild.get_member(row["user_id"])
+    vc = guild.voice_client
+    log.info("Timer for %s: %s (%s)", row["who"], row["said"], row["message"] or "-")
+    played = []
+    if vc is not None and member is not None and member.voice and member.voice.channel == vc.channel:
+        # "{name}, {message}." or, without a message, "{name}, time's up: {said}."
+        played = await respond(guild, "timer_ring", user_id=member.id, display_name=member.display_name,
+                               values={"said": row["said"], "message": row["message"]}, fallback=None)
+    if not played:
+        await post_timer(guild, row, member)
+
+
+async def post_timer(guild, row: dict, member) -> None:
+    text = tr(guild, "timer.ring_message" if row["message"] else "timer.ring",
+              mention=f"<@{row['user_id']}>", said=row["said"], message=row["message"])
+    mention = discord.AllowedMentions(users=[discord.Object(row["user_id"])], everyone=False, roles=False)
+    channel = notice_channel(guild)
+    if channel is not None:
+        try:
+            await channel.send(text, allowed_mentions=mention)
+            return
+        except discord.HTTPException as e:
+            log.warning("Couldn't post %s's timer in #%s: %s", row["who"], channel, e)
+    if member is not None:
+        try:
+            await member.send(text)
+        except discord.HTTPException:
+            log.warning("Couldn't tell %s their timer rang: no channel to post in and DMs closed", row["who"])
+
+
+def timer_rows(where, rows: list[dict]) -> list[str]:
+    now = time.time()
+    out = []
+    for t in rows:
+        left = max(0, int(t["ends_at"] - now))
+        hours, rest = divmod(left, 3600)
+        clock = f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60}:{rest % 60:02d}"
+        out.append(tr(where, "timer.row", id=t["id"], who=t["who"], what=t["message"] or t["said"], left=clock))
+    return out
 
 
 # ------------------------------------------------------------------ commands
@@ -997,29 +1220,66 @@ async def say_command(ctx, *, text: str):
     await reply(ctx, "common.done")
 
 
-@bot.hybrid_command(name="timer", description="The bot reminds you in N minutes (optionally about something)")
-async def timer_command(ctx, minutes: float, *, text: str = ""):
-    if not 0 < minutes <= 720:
-        return await reply(ctx, "timer.range")
-    said = timers.describe(minutes * 60, lang_of(ctx))
-    start_timer(ctx.guild, minutes * 60, said, text, ctx.author)
-    await reply(ctx, "timer.set", said=said)
+@bot.hybrid_command(name="timer", description="The bot reminds you: in 10 (minutes), 1h30m, 90s, or at 5pm")
+@app_commands.describe(duration="10 = 10 minutes; also 1h30m, 90s, 'half an hour', or a time: 'at 5pm'",
+                       text="What to remind you about")
+async def timer_command(ctx, duration: str, *, text: str = ""):
+    if ctx.guild is None:
+        return
+    lang = lang_of(ctx)
+    seconds = timers.parse_duration(duration, lang)
+    if seconds is not None:
+        key, said = "timer.set", timers.describe(seconds, lang)
+    else:
+        # "5pm", "17:30", "at 5:30 pm", "a las 5"
+        now = guild_now(ctx.guild)
+        said_at = duration.strip().lower().startswith(("at ", "a las ", "a la "))
+        tries = [duration] if said_at else [f"at {duration}", f"a las {duration}"]
+        alarm = next((found for attempt in tries if (found := timers.parse_clock(attempt, lang, now))), None)
+        if alarm is None:
+            return await reply(ctx, "timer.bad_duration")
+        seconds, said, _ = alarm
+        key = "timer.alarm_set"
+    if start_timer(ctx.guild, seconds, said, text.strip()[:200], ctx.author) is None:
+        return await reply(ctx, "timer.too_many", person=MAX_TIMERS_PER_PERSON, server=MAX_TIMERS_PER_SERVER)
+    await reply(ctx, key, said=said)
 
 
-@bot.hybrid_command(name="timers", description="List the running timers, or clear them all")
-async def timers_command(ctx, action: Literal["clear"] | None = None):
-    running = guild_timers[ctx.guild.id]
-    if action == "clear":
-        for timer in list(running):
-            timer.task.cancel()
-        return await reply(ctx, "timer.cleared")
-    now = time.monotonic()
-    rows = [
-        tr(ctx, "timer.row", who=t.who, what=t.message or t.said,
-           left=f"{int((t.ends_at - now) // 60)}:{int((t.ends_at - now) % 60):02d}")
-        for t in sorted(running, key=lambda t: t.ends_at)
-    ]
-    await reply(ctx, "common.raw", text="\n".join(rows) or tr(ctx, "timer.none"))
+@bot.hybrid_group(name="timers", fallback="list", description="The timers running in this server")
+async def timers_group(ctx):
+    if ctx.guild is None:
+        return
+    rows = timer_rows(ctx, store.list_timers(ctx.guild.id))
+    await reply(ctx, "common.raw", text=fit(ctx, rows) if rows else tr(ctx, "timer.none"))
+
+
+@timers_group.command(name="cancel", description="Cancel one of your timers (by its number in /timers)")
+async def timers_cancel(ctx, number: int):
+    row = store.get_timer(number) if ctx.guild else None
+    if row is None or row["guild_id"] != ctx.guild.id:
+        return await reply(ctx, "timer.not_found", id=number)
+    if row["user_id"] != ctx.author.id and not await author_is_admin(ctx):
+        return await reply(ctx, "timer.not_yours")
+    cancel_timer(row["id"])
+    await reply(ctx, "timer.cancelled", what=row["message"] or row["said"])
+
+
+@timers_cancel.autocomplete("number")
+async def _timer_numbers(interaction: discord.Interaction, current: str):
+    rows = store.list_timers(interaction.guild_id, user_id=interaction.user.id)
+    return [app_commands.Choice(name=label[:100], value=t["id"])
+            for t, label in zip(rows, timer_rows(interaction.guild, rows)) if current in str(t["id"])][:25]
+
+
+@timers_group.command(name="clear", description="Cancel all your timers (admins: everyone's)")
+async def timers_clear(ctx):
+    if ctx.guild is None:
+        return
+    everyone = await author_is_admin(ctx)
+    rows = store.list_timers(ctx.guild.id, user_id=None if everyone else ctx.author.id)
+    for row in rows:
+        cancel_timer(row["id"])
+    await reply(ctx, "timer.cleared_all" if everyone else "timer.cleared_yours", count=len(rows))
 
 
 @bot.hybrid_command(name="autojoin", description="Join calls by itself when 2+ people are in one")
@@ -1123,9 +1383,13 @@ async def ask_consent(user_id: int, voice_channel, purpose: str) -> None:
         return
     except discord.HTTPException:
         pass
+    channel = notice_channel(voice_channel.guild, voice_channel, system=False)
+    if channel is None:
+        log.warning("Couldn't ask %s for %s consent: DMs closed and nowhere to post", member, purpose)
+        return
     try:
-        await voice_channel.send(f"{member.mention} {text}", view=consent_view(purpose, lang, user_id),
-                                 allowed_mentions=discord.AllowedMentions(users=[member]))
+        await channel.send(f"{member.mention} {text}", view=consent_view(purpose, lang, user_id),
+                           allowed_mentions=discord.AllowedMentions(users=[member]))
     except discord.HTTPException as e:
         log.warning("Couldn't ask %s for %s consent: %s", member, purpose, e)
 
@@ -1182,11 +1446,23 @@ async def may_keep_text(user_id: int, voice_channel) -> bool:
     return consent["status"] == "accepted"
 
 
-def notice_channel(guild):
-    """Where the bot announces things: the chat of the call it's in, else
-    the server's system channel (if it may post there)."""
+def configured_channel(guild):
+    """The channel picked for notices (/notices set, setting
+    notices.channel_id), if it still exists and the bot may post there."""
+    channel_id = store.get_setting(guild.id, "notices.channel_id")
+    channel = guild.get_channel_or_thread(int(channel_id)) if channel_id else None
+    return channel if channel is not None and hasattr(channel, "send") and can_post(channel) else None
+
+
+def notice_channel(guild, voice_channel=None, *, system: bool = True):
+    """Where the bot posts its notices: the channel picked with /notices;
+    else the chat of the call (`voice_channel`, or the one it's in); else,
+    with `system`, the server's system channel. None when it may post nowhere."""
+    configured = configured_channel(guild)
+    if configured is not None:
+        return configured
     vc = guild.voice_client
-    for channel in (vc.channel if vc else None, guild.system_channel):
+    for channel in (voice_channel or (vc.channel if vc else None), guild.system_channel if system else None):
         if channel is not None and can_post(channel):
             return channel
     return None
@@ -1275,15 +1551,59 @@ async def announce_join(channel) -> None:
     if now - last_join_notice.get(channel.id, -JOIN_NOTICE_EVERY_S) < JOIN_NOTICE_EVERY_S:
         return
     last_join_notice[channel.id] = now
-    if not can_post(channel):
-        return
     guild = channel.guild
+    target = notice_channel(guild, channel, system=False)
+    if target is None:
+        return
     text = tr(guild, "join.notice",
               transcripts=tr(guild, "join.transcripts_on" if transcripts_on(guild.id) else "join.transcripts_off"))
+    if can_ask(guild) and assistant.config.cloud:
+        # Questions to the bot leave this computer: say where they go.
+        text += " " + tr(guild, "join.llm_cloud", service=assistant.config.service)
     try:
-        await channel.send(text)
+        await target.send(text)
     except discord.HTTPException as e:
-        log.warning("Couldn't post the join notice in %s: %s", channel, e)
+        log.warning("Couldn't post the join notice in %s: %s", target, e)
+
+
+# ------------------------------------------------------------------ notices
+@bot.hybrid_group(name="notices", fallback="status", description="Where the bot posts its notices (joining, transcripts, consent, timers)")
+async def notices_group(ctx):
+    if ctx.guild is None:
+        return
+    channel_id = store.get_setting(ctx.guild.id, "notices.channel_id")
+    channel = configured_channel(ctx.guild)
+    if channel is not None:
+        await reply(ctx, "notices.status", channel=channel.mention)
+    elif channel_id:
+        await reply(ctx, "notices.unusable", channel=f"<#{channel_id}>")
+    else:
+        await reply(ctx, "notices.default")
+
+
+@notices_group.command(name="set", description="Admins: post the bot's notices in this channel (or the one given)")
+async def notices_set(ctx, channel: discord.TextChannel | discord.VoiceChannel | None = None):
+    if ctx.guild is None:
+        return
+    if not await author_is_admin(ctx):
+        return await reply(ctx, "common.admins_only")
+    channel = channel or ctx.channel
+    if getattr(channel, "guild", None) != ctx.guild or not hasattr(channel, "send"):
+        return await reply(ctx, "notices.cant_post", channel=getattr(channel, "mention", "?"))
+    if not can_post(channel):
+        return await reply(ctx, "notices.cant_post", channel=channel.mention)
+    store.set_setting(ctx.guild.id, "notices.channel_id", channel.id)
+    await reply(ctx, "notices.set", channel=channel.mention)
+
+
+@notices_group.command(name="reset", description="Admins: back to posting in the chat of the call")
+async def notices_reset(ctx):
+    if ctx.guild is None:
+        return
+    if not await author_is_admin(ctx):
+        return await reply(ctx, "common.admins_only")
+    store.delete_setting(ctx.guild.id, "notices.channel_id")
+    await reply(ctx, "notices.reset")
 
 
 def reload_content() -> None:
@@ -1368,6 +1688,9 @@ async def reset(ctx, mode: Literal["full"] | None = None):
         worker.cancel()
     reply_queues.pop(ctx.guild.id, None)
     recent_lines.pop(ctx.guild.id, None)
+    last_said.pop(ctx.guild.id, None)
+    if assistant is not None:
+        assistant.forget(ctx.guild.id)
     engine.invalidate(ctx.guild.id)
 
     if channel is None:
@@ -1405,6 +1728,8 @@ def _model_rows() -> list[dict]:
         model = voice_model
         rows.append({"name": "k2-fsa/OmniVoice", "role": "tts",
                      "device": str(model.device) if model is not None else "-", "loaded": model is not None})
+    if llm_config is not None:
+        rows.append({"name": llm_config.model, "role": "llm", "device": llm_config.provider, "loaded": True})
     return rows
 
 
@@ -1415,6 +1740,17 @@ def _gpu_status() -> dict | None:
     free, total = torch.cuda.mem_get_info()
     return {"name": torch.cuda.get_device_name(0), "used_gb": round((total - free) / 1e9, 2),
             "total_gb": round(total / 1e9, 2)}
+
+
+def machine_time_zone() -> str:
+    """This computer's time zone, as an IANA name when it can be found."""
+    zone = os.getenv("TZ", "").strip()
+    if zone:
+        return zone
+    try:
+        return str(Path("/etc/localtime").resolve()).split("zoneinfo/", 1)[1]
+    except (OSError, IndexError):
+        return datetime.now().astimezone().tzname() or "UTC"
 
 
 class Controller:
@@ -1428,16 +1764,22 @@ class Controller:
                           "people": len(people_in(vc.channel))} if vc is not None else None,
                 "voice_channels": [{"id": str(c.id), "name": c.name, "people": len(people_in(c))}
                                    for c in guild.voice_channels if c.permissions_for(guild.me).connect],
+                # Where it may post (the notices channel picker): text channels, then voice channels' chats.
+                "text_channels": [{"id": str(c.id), "name": c.name, "kind": "voice" if isinstance(c, discord.VoiceChannel) else "text"}
+                                  for c in [*guild.text_channels, *guild.voice_channels] if can_post(c)],
                 "toggles": {"autojoin": auto_join_enabled[guild.id], "userclone": bool(userclone.get(guild.id)),
                             "record": guild.id in recorders, "transcripts": transcripts_on(guild.id)},
                 "language": lang_of(guild),
                 "reply_queue": reply_queues[guild.id].qsize() if guild.id in reply_queues else 0,
-                "timers": len(guild_timers[guild.id]),
+                "timers": len(store.list_timers(guild.id)),
             })
         return {
             "bot": {"name": bot_name(), "user": str(bot.user) if bot.user else None,
                     "connected": bot.is_ready() and not bot.is_closed(),
-                    "uptime_s": round(time.monotonic() - STARTED_AT), "stt_engine": STT_ENGINE},
+                    "uptime_s": round(time.monotonic() - STARTED_AT), "stt_engine": STT_ENGINE,
+                    "time_zone": machine_time_zone(),
+                    "llm": {"provider": llm_config.provider, "model": llm_config.model, "cloud": llm_config.cloud,
+                            "service": llm_config.service} if llm_config else None},
             "models": _model_rows(),
             "gpu": _gpu_status(),
             "tts_queue": tts.snapshot(),

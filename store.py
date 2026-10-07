@@ -70,6 +70,23 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Uploaded sounds: longer ones are cut, bigger files refused.
     "sounds.max_seconds": 15,
     "sounds.max_mb": 5,
+    # The loudest any sound may play, in percent of the level sounds are
+    # evened out to on upload. Each sound's own volume is capped by it.
+    "sounds.max_volume": 100,
+    # Where the bot posts its notices (joining a call, transcripts, consent
+    # questions when someone's DMs are closed, timers): a channel id. None:
+    # the chat of the call it's in (else the server's system channel).
+    "notices.channel_id": None,
+    # The server's time zone for "what time is it" and "remind me at 5 pm":
+    # an IANA name such as "Europe/Madrid". None: the bot machine's own.
+    "time.zone": None,
+    # Questions after the wake word that aren't a command go to the LLM
+    # (when LLM_PROVIDER is set in .env).
+    "llm.enabled": True,
+    # Extra instructions for the LLM: a personality, topics to avoid...
+    "llm.persona": "",
+    # Seconds before the same person can ask the LLM again.
+    "llm.cooldown_s": 5,
     # Uploaded voice samples (/voices clone).
     "voices.max_mb": 20,
     # What a new server starts with: a pack under packs/ ("base-en", "base-es"...)
@@ -223,6 +240,20 @@ MIGRATIONS: list[str] = [
         SELECT user_id, 'voice', status, text_version, asked_at, decided_at FROM consent;
     DROP TABLE consent;
     ALTER TABLE consent_new RENAME TO consent;
+    """,
+    # 4: timers survive a restart
+    """
+    CREATE TABLE timers (
+        id INTEGER PRIMARY KEY,
+        guild_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        who TEXT NOT NULL,                -- what the bot calls them
+        said TEXT NOT NULL,               -- the time, as it was asked ("10 minutes", "5 PM")
+        message TEXT NOT NULL DEFAULT '',
+        ends_at REAL NOT NULL,            -- Unix time
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX timers_guild ON timers (guild_id, ends_at);
     """,
 ]
 
@@ -794,6 +825,28 @@ class Store:
                         "WHERE id = ?", ("approved" if approve else "denied", amount, now(), decided_by, request_id),
                         changed=("quota_requests", g))
             return self.get_quota_request(request_id)
+
+    # -------------------------------------------------------------- timers
+    # No change notifications: only the bot schedules them.
+    def add_timer(self, guild_id: int, user_id: int, who: str, said: str, message: str, ends_at: float) -> int:
+        return self._write("INSERT INTO timers (guild_id, user_id, who, said, message, ends_at, created_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (guild_id, user_id, who, said, message or "", float(ends_at), now())).lastrowid
+
+    def get_timer(self, timer_id: int) -> dict | None:
+        return self._get("timers", timer_id)
+
+    def list_timers(self, guild_id: int | None = None, *, user_id: int | None = None) -> list[dict]:
+        """Soonest first."""
+        sql, params = "SELECT * FROM timers WHERE 1", []
+        if guild_id is not None:
+            sql, params = sql + " AND guild_id = ?", [*params, guild_id]
+        if user_id is not None:
+            sql, params = sql + " AND user_id = ?", [*params, user_id]
+        return [self._decode(r) for r in self._query(sql + " ORDER BY ends_at, id", params)]
+
+    def delete_timer(self, timer_id: int) -> bool:
+        return self._write("DELETE FROM timers WHERE id = ?", (timer_id,)).rowcount > 0
 
     # -------------------------------------------------------------- events
     def log_event(self, guild_id: int | None, outcome: str, *, user_id: int | None = None,

@@ -239,11 +239,17 @@ function StepEditor({ s, data, onChange }) {
   </div>`;
 }
 
+// Helper replies that get {result}: the time, the coin, the dice, who was picked, the time left.
+const RESULT_EVENTS = ['timer_left', 'time_now', 'coin_result', 'dice_result', 'pick_result'];
+
 function placeholdersFor(triggers) {
   const out = new Set(['name']);
   for (const tr of triggers) {
     if (tr.type === 'swap') ['subject', 'connector', 'to'].forEach((p) => out.add(p));
-    if (tr.type === 'command' || (tr.type === 'event' && tr.event.startsWith('timer'))) ['said', 'message'].forEach((p) => out.add(p));
+    if (tr.type === 'command' || (tr.type === 'event' && (tr.event.startsWith('timer') || tr.event === 'alarm_set'))) {
+      ['said', 'message'].forEach((p) => out.add(p));
+    }
+    if (tr.type === 'event' && RESULT_EVENTS.includes(tr.event)) out.add('result');
   }
   return [...out];
 }

@@ -5,6 +5,8 @@
 # The format is described at the top of packs.py.
 
 format: 1
+# Reactions marked `since: 2` reach servers seeded from version 1 when the bot starts.
+version: 2
 
 reactions:
 
@@ -21,6 +23,46 @@ reactions:
 - name: timer
   command: [remind me, set a timer, timer, alarm, set an alarm]
   do: timer
+
+# "cancel all my timers" cancels every one of yours; otherwise the latest.
+- name: cancel timer
+  command: [cancel my timer, cancel the timer, cancel timer, cancel my timers, cancel all my timers, cancel my alarm,
+    cancel the alarm, stop the timer, stop my timer, delete my timer]
+  do: timer_cancel
+  since: 2
+
+- name: time left
+  command: [how much time is left, how much time left, how long is left, how long left, time left, check my timer,
+    check the timer]
+  do: timer_list
+  since: 2
+
+- name: time
+  command: [what time is it, what's the time, what is the time, tell me the time]
+  do: time
+  since: 2
+
+- name: coin
+  command: [flip a coin, toss a coin, flip coin, heads or tails, coin toss, coin flip]
+  do: coin
+  since: 2
+
+# "roll two dice", "roll a d20", "roll a 12 sided die"
+- name: dice
+  command: [roll, throw a die, throw the dice]
+  do: dice
+  since: 2
+
+- name: pick someone
+  command: [pick someone, pick somebody, pick a person, choose someone, choose somebody, pick one of us,
+    who goes first, random person]
+  do: pick
+  since: 2
+
+- name: repeat
+  command: [repeat that, say that again, say it again, what did you say, repeat]
+  do: repeat
+  since: 2
 
 # ── Stock replies ──
 
@@ -52,6 +94,62 @@ reactions:
 - name: timer ring
   event: timer_ring
   say: "{name}, time's up: {said}."
+
+- name: alarm set
+  event: alarm_set
+  say: "Okay, I'll remind you at {said}."
+  since: 2
+
+- name: timer cancelled
+  event: timer_cancelled
+  say: ["Okay, timer cancelled.", "Done, it's cancelled."]
+  since: 2
+
+- name: no timers
+  event: timer_none
+  say: ["You don't have any timers.", "No timers running for you."]
+  since: 2
+
+- name: time left (message)
+  event: timer_left
+  say: "{result} left on your timer: {message}."
+  since: 2
+
+- name: time left
+  event: timer_left
+  say: "{result} left on your timer."
+  since: 2
+
+- name: time now
+  event: time_now
+  say: ["It's {result}.", "{result}."]
+  since: 2
+
+- name: coin result
+  event: coin_result
+  say: ["{result}.", "It's {result}.", "{result}!"]
+  since: 2
+
+- name: dice result
+  event: dice_result
+  say: ["You rolled {result}.", "{result}."]
+  since: 2
+
+- name: pick result
+  event: pick_result
+  say: ["I pick {result}.", "{result}, it's you.", "{result}."]
+  since: 2
+
+- name: nothing to repeat
+  event: nothing_to_repeat
+  say: "I haven't said anything yet."
+  since: 2
+
+# When a question goes to the LLM (LLM_PROVIDER in .env) and it can't answer.
+- name: llm unavailable
+  event: llm_unavailable
+  say: ["Sorry, I can't answer that right now.", "My brain isn't working right now. Try again later."]
+  since: 2
 
 # ── Greetings ──
 

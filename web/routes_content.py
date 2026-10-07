@@ -617,6 +617,17 @@ def clean_setting(key: str, value, store, guild_id: int):
         if value != "none" and value not in starter_packs():
             raise FieldError(f"no starter pack called {value!r}", "value")
         return value
+    if key == "time.zone":
+        if value in (None, ""):
+            return None
+        from zoneinfo import ZoneInfo
+
+        try:
+            ZoneInfo(str(value).strip())
+        except Exception:
+            raise FieldError("time.zone must be a time zone name such as Europe/Madrid or America/Mexico_City",
+                             "value") from None
+        return str(value).strip()
     if key == "voice.bot":
         if value == "@speaker":
             raise FieldError("the bot's voice must be a saved global voice", "value")
@@ -644,6 +655,8 @@ def clean_setting(key: str, value, store, guild_id: int):
             raise FieldError(f"{key} must be a number", "value") from None
         if value < 0:
             raise FieldError(f"{key} can't be negative", "value")
+        if key == "sounds.max_volume" and value > 400:
+            raise FieldError("sounds.max_volume goes up to 400 (%)", "value")
         if isinstance(default, int) and key.startswith("quota."):
             if value != int(value):
                 raise FieldError(f"{key} must be a whole number", "value")

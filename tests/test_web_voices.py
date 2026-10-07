@@ -332,6 +332,11 @@ async def test_sound_upload_serve_edit_delete(client, store, sounds, controller)
     board = await ok(await client.get(f"{G}/board"))
     assert board["sounds"] == []  # disabled
     await ok(await client.patch(f"{G}/sounds/{sid}", json={"enabled": True}))
+    await ok(await client.patch(f"{G}/sounds/{sid}", json={"volume": 50}))
+    assert store.get_sound(sid)["gain_db"] == pytest.approx(-6.02, abs=0.01)
+    await ok(await client.patch(f"{G}/sounds/{sid}", json={"volume": 0}))
+    assert store.get_sound(sid)["gain_db"] == -60
+    assert (await client.patch(f"{G}/sounds/{sid}", json={"volume": 500})).status == 400
     board = await ok(await client.get(f"{G}/board"))
     assert [s["name"] for s in board["sounds"]] == ["risa"]
 

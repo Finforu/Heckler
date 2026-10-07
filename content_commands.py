@@ -467,12 +467,33 @@ def remove_sound(services, guild_id: int, actor: Actor, name: str) -> str:
     return i18n.t("sound.removed", language(services, guild_id), name=row["name"])
 
 
+def sound_volume(services, guild_id: int, actor: Actor, name: str, percent: float | None = None) -> str:
+    """Show a sound's volume, or set it (its creator or an admin). 100% is
+    the level every sound is evened out to; the server's sounds.max_volume
+    is as loud as any may go."""
+    from sound_library import db_to_volume, volume_to_db
+
+    lang = language(services, guild_id)
+    row = find_sound(services, guild_id, name)
+    cap = float(services.store.get_setting(guild_id, "sounds.max_volume"))
+    if percent is None:
+        return i18n.t("sound.volume_is", lang, name=row["name"], volume=db_to_volume(row["gain_db"]), max=f"{cap:g}")
+    _find_own([row], row["name"], actor, "sound.not_found")  # permission check
+    if not 0 <= float(percent) <= cap:
+        raise CommandError("sound.volume_range", max=f"{cap:g}")
+    services.store.update_sound(row["id"], gain_db=volume_to_db(percent))
+    return i18n.t("sound.volume_set", lang, name=row["name"], volume=f"{float(percent):g}")
+
+
 def list_sounds(services, guild_id: int, actor: Actor) -> str:
+    from sound_library import db_to_volume
+
     lang = language(services, guild_id)
     rows = []
     for s in services.store.list_sounds(guild_id):
         mine = "★ " if s["created_by"] == actor.user_id else ""
-        rows.append(f"• {mine}**{s['name']}** ({s['duration_s'] or 0:.1f}s)")
+        volume = db_to_volume(s["gain_db"])
+        rows.append(f"• {mine}**{s['name']}** ({s['duration_s'] or 0:.1f}s{'' if volume == 100 else f', {volume}%'})")
     if not rows:
         return i18n.t("sound.none", lang)
     return fit([i18n.t("sound.list_header", lang, **_quota(services, guild_id, actor, "sounds")), *rows])
@@ -866,6 +887,15 @@ class ContentCommands(commands.Cog):
 
     @sound_play.autocomplete("name")
     async def _sound_names(self, interaction, current: str):
+        return [app_commands.Choice(name=n, value=n) for n in sound_names(self.services, interaction.guild_id, current)]
+
+    @sound.command(name="volume", description="How loud a sound plays (100 = normal); yours, or any for admins")
+    @app_commands.describe(name="The sound", percent="New volume in percent, e.g. 50 (leave out to see it)")
+    async def sound_volume(self, ctx, name: str, percent: app_commands.Range[int, 0, 400] | None = None):
+        await self.run_ctx(ctx, sound_volume, name, percent)
+
+    @sound_volume.autocomplete("name")
+    async def _volume_sounds(self, interaction, current: str):
         return [app_commands.Choice(name=n, value=n) for n in sound_names(self.services, interaction.guild_id, current)]
 
     @sound.command(name="remove", description="Remove one of your sounds")

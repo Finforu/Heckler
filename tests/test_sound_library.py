@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from sound_library import RATE, SoundLibrary, sound_name, trim_silence
+from sound_library import (RATE, SILENT_DB, SoundLibrary, db_to_volume, effective_db, sound_name, trim_silence,
+                           volume_to_db)
 
 
 def wav_bytes(audio, rate=RATE, fmt="WAV") -> bytes:
@@ -86,3 +87,47 @@ def test_pcm_and_delete(store, sounds):
     assert store.get_sound(row["id"]) is None and not path.exists()
     with pytest.raises(KeyError):
         sounds.pcm(row["id"])
+
+
+def test_volume_percent_and_db():
+    assert volume_to_db(100) == 0 and volume_to_db(0) == SILENT_DB
+    assert volume_to_db(50) == pytest.approx(-6.02, abs=0.01)
+    assert volume_to_db(200) == pytest.approx(6.02, abs=0.01)
+    for percent in (0, 5, 50, 100, 150, 200, 400):
+        assert db_to_volume(volume_to_db(percent)) == percent
+    assert db_to_volume(None) == 100 and db_to_volume(-200) == 0
+    for bad in (-1, 401):
+        with pytest.raises(ValueError):
+            volume_to_db(bad)
+
+
+def test_server_cap():
+    assert effective_db(6, 100) == 0          # a boost above the cap is held to it
+    assert effective_db(-6, 100) == -6        # quieter sounds are left alone
+    assert effective_db(6, 200) == 6
+    assert effective_db(0, 50) == pytest.approx(-6.02, abs=0.01)
+    assert effective_db(0, 0) == SILENT_DB
+    assert effective_db(3, None) == 3
+
+
+def peak(pcm: bytes) -> int:
+    return int(np.abs(np.frombuffer(pcm, np.int16)).max())
+
+
+def test_cap_applies_when_playing(store, sounds):
+    row = sounds.add(1, "beep", wav_bytes(beep(1)), created_by=1)
+    normal = peak(sounds.pcm(row["id"]))
+    store.update_sound(row["id"], gain_db=volume_to_db(200))
+    assert peak(sounds.pcm(row["id"])) == normal  # default cap: 100%
+    store.set_setting(1, "sounds.max_volume", 200)
+    loud = peak(sounds.pcm(row["id"]))
+    assert loud > normal * 1.5
+    store.set_setting(1, "sounds.max_volume", 50)
+    assert peak(sounds.pcm(row["id"])) < normal * 0.6  # a lower cap turns down sounds set louder
+
+
+def test_boost_never_clips(store, sounds):
+    row = sounds.add(1, "spiky", wav_bytes(beep(1)), created_by=1)
+    store.set_setting(1, "sounds.max_volume", 400)
+    store.update_sound(row["id"], gain_db=volume_to_db(400))
+    assert peak(sounds.pcm(row["id"])) <= 0.99 * 32767 + 1

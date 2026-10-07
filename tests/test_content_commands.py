@@ -207,6 +207,20 @@ def test_sounds(services, store):
         cc.find_sound(services, G, "air-horn")
 
 
+def test_sound_volume(services, store):
+    cc.add_sound(services, G, ME, "horn", wav(1))
+    assert "100%" in cc.sound_volume(services, G, OTHER, "horn")  # anyone can look
+    with pytest.raises(CommandError, match="isn't yours"):
+        cc.sound_volume(services, G, OTHER, "horn", 50)
+    assert "50%" in cc.sound_volume(services, G, ME, "horn", 50)
+    assert store.find_sound(G, "horn")["gain_db"] == pytest.approx(-6.02, abs=0.01)
+    assert "horn** (1.0s, 50%)" in cc.list_sounds(services, G, ME)
+    with pytest.raises(CommandError, match="0 to 100%"):  # the server's cap
+        cc.sound_volume(services, G, ME, "horn", 150)
+    store.set_setting(G, "sounds.max_volume", 200)
+    assert "150%" in cc.sound_volume(services, G, ADMIN, "horn", 150)  # admins may change anyone's
+
+
 def test_sound_quota(services, store):
     store.set_setting(G, "quota.sounds", 1)
     cc.add_sound(services, G, ME, "uno", wav(1))

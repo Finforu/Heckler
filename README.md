@@ -11,8 +11,11 @@ sounds and voices from Discord, within quotas.
 - **Listens:** speech-to-text per speaker, with Whisper (GPU) or Parakeet (CPU).
 - **Answers:**
   - gags: "phrase → reply", plus a "swap" word game
-  - sound clips
-  - voice commands after its name ("Hey Heckler, leave", timers)
+  - sound clips, each with its own volume
+  - voice commands after its name ("Hey Heckler, leave", timers and alarms,
+    the time, a coin, dice, picking someone)
+  - optionally, questions answered by an LLM ("Heckler, how far is the moon?"):
+    Claude, OpenAI, or a local model with Ollama or LM Studio
   - greetings when people join or leave
 - **Talks:** in [OmniVoice](https://github.com/k2-fsa/OmniVoice) voices:
   - its own voice, designed from a description or cloned from ~10 s of audio
@@ -118,6 +121,7 @@ everything.
 | `DEFAULT_LANGUAGE` | `en` (default) or `es`, for servers that haven't picked one |
 | `VOICE`, `STT_ENGINE`, `WHISPER_LANGUAGES`… | Speech settings, see `.env.example` |
 | `DASHBOARD`, `DASHBOARD_HOST`, `DASHBOARD_PORT`, `DASHBOARD_TOKEN` | The admin dashboard |
+| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | Optional: answer questions with an LLM, see [Questions](#questions-optional-llm) |
 
 The words a voice description (or `/voices create`) can use:
 
@@ -166,11 +170,14 @@ All of them work as slash commands and with the `!` prefix.
 |---|---|
 | `/join`, `/leave` | Join your voice channel / leave |
 | `/say <text>` | Say something in the call |
-| `/timer <minutes> [text]`, `/timers [clear]` | Reminders |
+| `/timer <duration> [text]` | A reminder: `10` (minutes), `1h30m`, `90s`, or a time of day (`5pm`, `17:30`) |
+| `/timers` (`cancel <number>` / `clear`) | The timers running; cancel yours (admins: anyone's) |
+| `/ask <question>` | Ask the LLM, answered in text (when one is set up) |
+| `/notices` (`set [channel]` / `reset`) | Where the bot posts its notices (admins change it) |
 | `/autojoin on\|off` | Join calls by itself |
 | `/language [en\|es]` | The bot's language in this server (admins change it) |
 | `/gag add` / `list` / `remove` / `test` | Your gags. `test` shows what a sentence would set off, and why |
-| `/sound add` / `play` / `list` / `remove` | Upload sounds, play them, give them trigger phrases |
+| `/sound add` / `play` / `list` / `volume` / `remove` | Upload sounds, play them, give them trigger phrases, set how loud they play |
 | `/voices list` / `preview` / `create` / `clone` / `remove` | Saved voices: designed from a description, or cloned from a sample you have permission to use |
 | `/voice` (`optin` / `delete` / `refresh`) | Your own voice: consent, delete, rebuild |
 | `/userclone on\|off` | Gags answer in the speaker's own voice (only people who agreed) |
@@ -178,9 +185,38 @@ All of them work as slash commands and with the `!` prefix.
 | `/nicknames` | Who's in the call and what the bot calls them |
 | `/reload`, `/reset` | Re-read content; rejoin and clear stuck state |
 
-Voice commands are the bot's name plus a phrase, for example "Heckler,
-leave" or "Heckler, remind me in 10 minutes to stretch". Packs can change the
-phrases.
+Voice commands are the bot's name plus a phrase. Packs can change the
+phrases; the starter packs understand, in English and Spanish:
+
+| Say "Heckler, …" | It |
+|---|---|
+| "leave", "stop" | leaves the call, stops what's playing |
+| "remind me in 10 minutes to stretch", "set a timer for an hour and a half" | sets a timer |
+| "remind me at 5 pm to call mom" | sets an alarm (in the server's time zone) |
+| "how much time is left?", "cancel my timer", "cancel all my timers" | checks or cancels your timers |
+| "what time is it?" | says the time |
+| "flip a coin", "roll two dice", "roll a d20" | flips, rolls |
+| "pick someone" | picks someone in the call |
+| "say that again" | repeats what it last said |
+| anything else | answers with the LLM, if there is one; otherwise "Sorry, I didn't get that" |
+
+Timers survive a restart. When one rings and you're not in the call with the
+bot, it pings you in writing instead.
+
+### Questions (optional LLM)
+
+Set `LLM_PROVIDER` in `.env` and restart:
+
+| Provider | `.env` |
+|---|---|
+| Claude API | `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=…` (model `claude-sonnet-5-5` unless `LLM_MODEL` says otherwise, e.g. `claude-opus-5-5` for the most capable or `claude-haiku-4-5` for the cheapest) |
+| OpenAI | `LLM_PROVIDER=openai`, `LLM_MODEL=…` and `OPENAI_API_KEY=…` |
+| Ollama | `LLM_PROVIDER=ollama` and `LLM_MODEL=llama3.2` (or any model you've pulled) |
+| LM Studio | `LLM_PROVIDER=lmstudio` and `LLM_MODEL=` the loaded model's name |
+
+`LLM_BASE_URL` points at a server on another machine. Each server can turn it
+off, give it a personality and set the wait between questions (dashboard ›
+Settings). Answers are kept to a few spoken sentences.
 
 ## Privacy and consent
 
@@ -188,7 +224,8 @@ All data stays on the machine running the bot, under `data/` and
 `transcripts/`. Both are in `.gitignore`. Never commit them or share them.
 
 - **When the bot joins a call,** it posts a short notice: it's listening, and
-  what it keeps.
+  what it keeps. It goes to the call's chat, or the channel picked with
+  `/notices set`.
 - **Listening is not recording.**
   - Speech is transcribed in memory to react to it.
   - The event log behind the dashboard's feed and stats keeps what happened
@@ -209,6 +246,11 @@ All data stays on the machine running the bot, under `data/` and
   - Cloning someone's voice without their permission is not allowed. The
     OmniVoice model card strictly prohibits unauthorized voice cloning,
     impersonation, fraud and scams.
+- **Questions to an LLM** (only when `LLM_PROVIDER` is set). Only what's
+  said to the bot after its name is sent, with the asker's name and the last
+  few questions and answers in that server. With a cloud provider (Claude
+  API, OpenAI) that leaves the machine, and the join notice says so. Ollama
+  or LM Studio keep it local.
 - **Debug options** `SAVE_AUDIO` and `/record` write audio to disk. Leave
   them off unless you're testing.
 

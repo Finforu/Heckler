@@ -253,6 +253,23 @@ async def test_starter_pack_setting(client, store):
     assert (await client.put(f"{G}/settings/content.starter_pack", json={"value": "nope"})).status == 400
 
 
+async def test_new_settings(client, store):
+    await ok(await client.put(f"{G}/settings/time.zone", json={"value": "Europe/Madrid"}))
+    assert store.get_setting(GID, "time.zone") == "Europe/Madrid"
+    assert (await client.put(f"{G}/settings/time.zone", json={"value": "Mars/Olympus"})).status == 400
+    await ok(await client.put(f"{G}/settings/time.zone", json={"value": ""}))
+    assert store.get_setting(GID, "time.zone") is None
+    await ok(await client.put(f"{G}/settings/notices.channel_id", json={"value": "123456789012345678"}))
+    assert store.get_setting(GID, "notices.channel_id") == 123456789012345678
+    assert (await client.put(f"{G}/settings/notices.channel_id", json={"value": "general"})).status == 400
+    await ok(await client.put(f"{G}/settings/sounds.max_volume", json={"value": 150}))
+    assert (await client.put(f"{G}/settings/sounds.max_volume", json={"value": 900})).status == 400
+    await ok(await client.put(f"{G}/settings/llm.persona", json={"value": "  a grumpy pirate "}))
+    assert store.get_setting(GID, "llm.persona") == "a grumpy pirate"
+    await ok(await client.put(f"{G}/settings/llm.enabled", json={"value": False}))
+    assert (await client.put(f"{G}/settings/llm.enabled", json={"value": "yes"})).status == 400
+
+
 # ---------------------------------------------------------------- quotas, settings
 
 async def test_quota_request_decide(client, store):

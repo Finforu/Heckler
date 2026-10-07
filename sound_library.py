@@ -6,6 +6,11 @@ start and end are cut, it's capped in length (setting sounds.max_seconds) and
 leveled to about the loudness of the bot's speech, so a meme sound doesn't
 blast the call. It's stored as data/sounds/<guild_id>/<sound_id>.flac, 48 kHz
 mono: Discord's rate, so playing it is just a copy to stereo.
+
+Each sound has its own volume (gain_db in the store, shown to people as a
+percentage of that even level: 100% = as uploaded), and the server's
+sounds.max_volume caps every one of them when it plays. Peaks are never
+pushed past full scale, so a boost can't distort.
 """
 import io
 import logging
@@ -29,6 +34,8 @@ EDGE_PAD_S = 0.05       # kept around what's left, so nothing starts mid-breath
 FADE_S = 0.05           # fade-out when a sound is cut short
 PCM_CACHE_SIZE = 32
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+MAX_VOLUME = 400        # percent: nothing, not even the server cap, goes higher
+SILENT_DB = -60.0       # what 0% is stored as
 
 
 class SoundError(ValueError):
@@ -77,6 +84,28 @@ def decode(data: bytes | str | Path) -> np.ndarray:
         log.debug("Couldn't decode an upload: %s: %s", type(e).__name__, e)
         raise SoundError("sound.not_audio") from None
     return np.asarray(audio, dtype=np.float32)
+
+
+def volume_to_db(percent: float) -> float:
+    """100 (%) -> 0.0 dB, 50 -> -6.02, 0 -> SILENT_DB."""
+    percent = float(percent)
+    if not 0 <= percent <= MAX_VOLUME:
+        raise ValueError(f"volume must be between 0 and {MAX_VOLUME}%")
+    return SILENT_DB if percent == 0 else max(SILENT_DB, round(20 * float(np.log10(percent / 100)), 2))
+
+
+def db_to_volume(gain_db: float | None) -> int:
+    """0.0 dB -> 100 (%); SILENT_DB or lower -> 0."""
+    gain_db = float(gain_db or 0)
+    return 0 if gain_db <= SILENT_DB else int(round(100 * 10 ** (gain_db / 20)))
+
+
+def effective_db(gain_db: float | None, max_volume) -> float:
+    """A sound's gain once the server's cap (sounds.max_volume, %) is applied."""
+    gain_db = float(gain_db or 0)
+    if max_volume is None:
+        return gain_db
+    return min(gain_db, volume_to_db(min(max(float(max_volume), 0), MAX_VOLUME)))
 
 
 def to_discord_pcm(audio: np.ndarray) -> bytes:
@@ -143,12 +172,16 @@ class SoundLibrary:
         log.info("Sound %s added to %s (%.1fs, from %s)", name, guild_id, len(audio) / RATE, filename or "upload")
         return self.store.get_sound(sound_id)
 
+    def gain(self, row: dict) -> float:
+        """The gain (dB) a sound plays with: its own, capped by the server's sounds.max_volume."""
+        return effective_db(row["gain_db"], self.store.get_setting(row["guild_id"], "sounds.max_volume"))
+
     def pcm(self, sound_id: int) -> bytes:
-        """The sound as Discord PCM, with its gain applied. KeyError if it's gone."""
+        """The sound as Discord PCM, at its volume (see gain). KeyError if it's gone."""
         row = self.store.get_sound(sound_id)
         if row is None:
             raise KeyError(f"no sound {sound_id}")
-        key = (sound_id, float(row["gain_db"] or 0))
+        key = (sound_id, self.gain(row))
         with self._lock:
             if key in self._pcm:
                 self._pcm.move_to_end(key)
@@ -161,7 +194,11 @@ class SoundLibrary:
 
             audio = soxr.resample(audio, rate, RATE).astype(np.float32)
         if key[1]:
-            audio = audio * 10 ** (key[1] / 20)
+            gain = 10 ** (key[1] / 20)
+            peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+            if peak * gain > 0.99:  # a boost stops where it would clip
+                gain = 0.99 / peak
+            audio = audio * gain
         pcm = to_discord_pcm(audio)
         with self._lock:
             self._pcm[key] = pcm

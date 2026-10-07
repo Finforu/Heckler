@@ -366,3 +366,15 @@ def test_threads_share_one_store(store):
         t.join()
     assert all(len(store.list_reactions(n)) == 25 for n in range(1, 5))
     assert len(store.list_events(limit=1000)) == 100
+
+
+def test_timers(store):
+    a = store.add_timer(1, 5, "Ana", "10 minutes", "pizza", 2000.0)
+    b = store.add_timer(1, 6, "Bo", "5 PM", "", 1000.0)
+    store.add_timer(2, 5, "Ana", "1 hour", "", 3000.0)
+    assert [t["id"] for t in store.list_timers(1)] == [b, a]  # soonest first
+    assert [t["guild_id"] for t in store.list_timers()] == [1, 1, 2]
+    assert [t["said"] for t in store.list_timers(1, user_id=5)] == ["10 minutes"]
+    assert store.get_timer(a)["message"] == "pizza" and store.get_timer(a)["ends_at"] == 2000.0
+    assert store.delete_timer(a) and not store.delete_timer(a)
+    assert store.get_timer(a) is None

@@ -216,7 +216,8 @@ def test_base_packs(store, name, command, said):
     assert {r["kind"] for r in rows} == {"command", "response", "gag"}
     assert all(not r["enabled"] for r in rows if r["kind"] == "gag")  # examples, off
     actions = {s["action"] for r in rows for o in r["options"] for s in o if s["type"] == "builtin"}
-    assert actions == {"leave", "stop", "timer"}  # no test-sound "play"
+    assert actions == {"leave", "stop", "timer", "timer_cancel", "timer_list", "time", "coin", "dice", "pick",
+                       "repeat"}  # no test-sound "play"
     engine = ReactionEngine(store)
     assert engine.for_command(1, command).steps == [{"type": "builtin", "action": "leave"}]
     for event in ("wake", "ack", "leave", "unknown", "arrival"):
@@ -228,6 +229,50 @@ def test_base_packs(store, name, command, said):
         == "Ana, la pizza."
     assert said in engine.for_event(1, "timer_ring", 5, "Ana", "Ana", {"said": said, "message": ""}).text
     assert engine.match(1, "buenas noches good night", 5, "Ana", "Ana") is None  # gags start off
+    for event in ("timer_cancelled", "timer_none", "nothing_to_repeat", "llm_unavailable"):
+        assert engine.for_event(1, event).text
+    assert said in engine.for_event(1, "alarm_set", values={"said": said}).text
+    for event in ("time_now", "coin_result", "dice_result", "pick_result"):
+        assert "XYZ" in engine.for_event(1, event, values={"result": "XYZ"}).text
+    left = engine.for_event(1, "timer_left", 5, "Ana", "Ana", {"result": "4 min", "message": "la pizza"}).text
+    assert "4 min" in left and "la pizza" in left
+    assert engine.for_event(1, "timer_left", 5, "Ana", "Ana", {"result": "4 min", "message": ""}).text
+
+
+# What people say after the wake word -> the action it sets off.
+@pytest.mark.parametrize("name, request_, action", [
+    ("base-en", "remind me in 10 minutes to stretch", "timer"),
+    ("base-en", "set an alarm at 5 pm", "timer"),
+    ("base-en", "cancel my timer", "timer_cancel"),
+    ("base-en", "cancel all my timers", "timer_cancel"),
+    ("base-en", "stop the timer", "timer_cancel"),
+    ("base-en", "how much time is left on my timer", "timer_list"),
+    ("base-en", "what time is it", "time"),
+    ("base-en", "what's the time", "time"),
+    ("base-en", "flip a coin", "coin"),
+    ("base-en", "heads or tails", "coin"),
+    ("base-en", "roll two dice", "dice"),
+    ("base-en", "roll a d20", "dice"),
+    ("base-en", "pick someone", "pick"),
+    ("base-en", "who goes first", "pick"),
+    ("base-en", "say that again", "repeat"),
+    ("base-en", "stop", "stop"),
+    ("base-es", "recuérdame en 10 minutos sacar la pizza", "timer"),
+    ("base-es", "avísame a las 5", "timer"),
+    ("base-es", "cancela mi temporizador", "timer_cancel"),
+    ("base-es", "para el temporizador", "timer_cancel"),
+    ("base-es", "¿cuánto falta?", "timer_list"),
+    ("base-es", "¿qué hora es?", "time"),
+    ("base-es", "cara o cruz", "coin"),
+    ("base-es", "tira dos dados", "dice"),
+    ("base-es", "elige a alguien", "pick"),
+    ("base-es", "¿qué dijiste?", "repeat"),
+    ("base-es", "para", "stop"),
+])
+def test_helper_commands(store, name, request_, action):
+    packs.import_pack(store, 1, PACKS / f"{name}.yaml")
+    m = ReactionEngine(store).for_command(1, request_)
+    assert m is not None and m.steps == [{"type": "builtin", "action": action}]
 
 
 def test_english_swap_example(store, tmp_path):
@@ -241,12 +286,13 @@ def test_english_swap_example(store, tmp_path):
 
 
 def test_seed_guild(store, tmp_path):
-    assert packs.seed_guild(store, 1) == "pack base-en: 16 reactions"  # the default: English
+    assert packs.seed_guild(store, 1) == "pack base-en: 34 reactions"  # the default: English
+    assert store.get_setting(1, packs.STARTER_VERSION) == 2
     assert packs.seed_guild(store, 1) == "kept: the server already has content"
-    assert len(store.list_reactions(1)) == 16
+    assert len(store.list_reactions(1)) == 34
 
     store.set_setting(2, "language", "es")  # the server's language picks the pack
-    assert packs.seed_guild(store, 2) == "pack base-es: 16 reactions"
+    assert packs.seed_guild(store, 2) == "pack base-es: 34 reactions"
     assert store.get_setting(2, "voices.preview_text") == "¡Hola! Así suena mi voz."
     store.set_setting(3, "language", "xx")  # a language with no pack: English
     assert packs.seed_guild(store, 3).startswith("pack base-en")
@@ -261,3 +307,34 @@ def test_seed_guild(store, tmp_path):
     assert "isn't a pack name" in packs.seed_guild(store, 7)
     store.set_setting(0, "content.starter_pack", "base-es")  # a global choice works too
     assert packs.seed_guild(store, 8).startswith("pack base-es")
+
+
+def test_upgrade_adds_only_newer_reactions(store, tmp_path):
+    """A server seeded from version 1 gets what version 2 added, once, and
+    keeps its own edits and deletions of the old content."""
+    data = yaml.safe_load((PACKS / "base-en.yaml").read_text(encoding="utf-8"))
+    old = dict(data, version=1, reactions=[r for r in data["reactions"] if r.get("since", 1) == 1])
+    (tmp_path / "packs").mkdir()
+    (tmp_path / "packs" / "base-en.yaml").write_text(yaml.safe_dump(old), encoding="utf-8")
+    assert packs.seed_guild(store, 1, packs_dir=tmp_path / "packs") == "pack base-en: 16 reactions"
+
+    leave = next(r for r in store.list_reactions(1) if r["name"] == "leave" and r["kind"] == "command")
+    store.delete_reaction(leave["id"])  # the admin removed one
+    stop = next(r for r in store.list_reactions(1) if r["name"] == "stop")
+    store.update_reaction(stop["id"], triggers=[{"type": "command", "phrases": ["shush"]}])  # and changed one
+    store.add_reaction(1, "command", "coin", [{"type": "command", "phrases": ["my coin"]}],
+                       [[{"type": "say", "text": "Mine"}]])  # and already made their own "coin"
+
+    assert packs.seed_guild(store, 1) == "pack base-en v2: added 17 new reactions"
+    names = [(r["kind"], r["name"]) for r in store.list_reactions(1)]
+    assert len(names) == 16 - 1 + 1 + 17 and ("command", "leave") not in names
+    assert names.count(("command", "coin")) == 1
+    assert store.get_reaction(stop["id"])["triggers"] == [{"type": "command", "phrases": ["shush"]}]
+    assert store.get_setting(1, packs.STARTER_VERSION) == 2
+    assert packs.seed_guild(store, 1) == "kept: the server already has content"  # only once
+
+
+def test_starter_version_isnt_exported(store):
+    packs.seed_guild(store, 1)
+    data, _ = packs.pack_data(store, 1)
+    assert packs.STARTER_VERSION not in data.get("settings", {})

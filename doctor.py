@@ -4,7 +4,8 @@
 
 Checks Python, the installed packages, the GPU, disk space, the .env file
 and (online) that the Discord token works, that the Message Content intent
-is on, and prints the invite link. Exit code 1 if something must be fixed.
+is on, and prints the invite link. With an LLM set up (LLM_PROVIDER), that
+its settings make sense and a local server answers. Exit code 1 if something must be fixed.
 Only uses the standard library until it checks the packages themselves.
 """
 import importlib
@@ -199,6 +200,44 @@ def check_discord(settings: dict[str, str], online: bool) -> None:
     print(f"\n  Invite link (needs Manage Server on the server you add it to):\n  {INVITE.format(app.get('id'))}")
 
 
+def check_llm(settings: dict[str, str], online: bool) -> None:
+    import llm  # standard library only
+
+    section("Questions (LLM)")
+    try:
+        config = llm.config_from_env({**os.environ, **settings})
+    except ValueError as e:
+        say("fail", str(e), "fix it in .env, or empty LLM_PROVIDER to go without")
+        return
+    if config is None:
+        say("ok", "Not set up (optional): set LLM_PROVIDER in .env to answer questions")
+        return
+    if config.provider == "anthropic":
+        try:
+            importlib.import_module("anthropic")
+        except ImportError:
+            say("fail", "LLM_PROVIDER=anthropic needs the anthropic package", "run ./install.sh again")
+            return
+    where = config.base_url or "api.anthropic.com"
+    say("ok", f"{config.service}, model {config.model} ({where})")
+    if config.cloud:
+        say("ok", "Questions people ask the bot will be sent there (the join notice says so)")
+        return
+    if not online:
+        return
+    try:
+        with urllib.request.urlopen(f"{config.base_url}/models", timeout=5) as r:
+            models = [m.get("id") for m in json.load(r).get("data", [])]
+    except Exception as e:
+        say("warn", f"No answer from {config.base_url}: {e}", f"start {config.service} before the bot")
+        return
+    if models and config.model not in models:
+        say("warn", f"{config.service} doesn't list the model {config.model}",
+            f"it has: {', '.join(models[:8])}" + (" …" if len(models) > 8 else ""))
+    else:
+        say("ok", f"{config.service} is answering")
+
+
 def main() -> int:
     online = "--offline" not in sys.argv
     settings = env()
@@ -208,6 +247,7 @@ def main() -> int:
     check_gpu(settings)
     check_disk()
     check_discord(settings, online)
+    check_llm(settings, online)
     print()
     if problems:
         print(f"{problems} thing(s) to fix before starting the bot.")

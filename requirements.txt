@@ -23,5 +23,9 @@ soundfile
 # Storage (YAML packs); the dashboard uses aiohttp, which discord.py already installs
 pyyaml
 
+# Optional answers to questions (LLM_PROVIDER=anthropic: the Claude API). OpenAI,
+# Ollama and LM Studio need nothing extra: they're called with aiohttp.
+anthropic==1.11.0
+
 # Resampling (speech-to-text input, Discord output)
 soxr==1.1.0

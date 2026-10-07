@@ -24,7 +24,7 @@ Voices, under /api/g/{gid}:
 Sounds:
     GET    sounds/{sid}/audio                  the stored file
     POST   sounds                              multipart {name, file}
-    PATCH  sounds/{sid}                        {name, enabled, gain_db}
+    PATCH  sounds/{sid}                        {name, enabled, gain_db | volume (%)}
     DELETE sounds/{sid}                        sounds.delete
     POST   sounds/{sid}/reaction               {trigger: {type: phrase|command|slash, ...}}: a kind="sound" reaction
     POST   sounds/{sid}/play                   controller.play_sound
@@ -732,7 +732,10 @@ async def sound_update(request: web.Request) -> web.Response:
     if "enabled" in body:
         fields["enabled"] = bool(body["enabled"])
     if "gain_db" in body:
-        fields["gain_db"] = _float(body["gain_db"], "gain_db", low=-30, high=20) or 0.0
+        fields["gain_db"] = _float(body["gain_db"], "gain_db", low=sound_library.SILENT_DB, high=20) or 0.0
+    if "volume" in body:  # percent, as the dashboard shows it (100 = as uploaded)
+        volume = _float(body["volume"], "volume", low=0, high=sound_library.MAX_VOLUME)
+        fields["gain_db"] = sound_library.volume_to_db(volume if volume is not None else 100)
     if fields:
         store.update_sound(row["id"], **fields)
     return json_response({"sound": store.get_sound(sid)})

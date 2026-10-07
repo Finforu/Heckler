@@ -14,7 +14,8 @@ A reaction row holds:
             row); each is a list of steps played in order:
               {"type": "say", "text": "No {name}, {subject} {connector} {to}.", "voice_id": null}
               {"type": "sound", "sound_id": 4}
-              {"type": "builtin", "action": "leave"}
+              {"type": "builtin", "action": "leave"}   (leave stop timer timer_cancel
+                  timer_list time coin dice pick repeat)
 
   phrase  the phrase as whole words anywhere in the sentence, ignoring
           capitals, accents and punctuation. Any language.
@@ -31,7 +32,8 @@ A reaction row holds:
           The swallowed connector only applies to the Spanish ones.
 
 Templates: {name} (who said it), {subject}, {connector}, {to} (swaps),
-{said} and {message} (timers). An option that needs a value that is missing
+{said} and {message} (timers), {result} (what a helper came up with: the
+time, a coin, dice, the person picked, the time left on a timer). An option that needs a value that is missing
 or empty is skipped, and a reaction with no usable option doesn't fire, so
 the next one gets its chance: that's how "{name}, {message}." gives way to
 "{name}, your {said} are up." when a timer has no message.
@@ -66,11 +68,14 @@ DEFAULT_CONNECTORS = ("de", "e", "y")
 DEFAULT_SWAP_REPLY = "No, {subject} {connector} {to}."
 
 TRIGGER_TYPES = ("phrase", "swap", "command", "slash", "event")
-EVENTS = ("wake", "ack", "leave", "unknown", "hello", "bye", "arrival", "timer_set", "timer_ring")
+EVENTS = ("wake", "ack", "leave", "unknown", "hello", "bye", "arrival", "timer_set", "timer_ring",
+          "alarm_set", "timer_cancelled", "timer_left", "timer_none", "time_now", "coin_result", "dice_result",
+          "pick_result", "nothing_to_repeat", "llm_unavailable")
 STEP_TYPES = ("say", "sound", "builtin")
 # "play" (the old test sound) is gone from the bot; still accepted so older rows stay valid.
-BUILTINS = ("leave", "stop", "play", "timer")
-PLACEHOLDERS = ("name", "subject", "connector", "to", "said", "message")
+BUILTINS = ("leave", "stop", "play", "timer", "timer_cancel", "timer_list", "time", "coin", "dice", "pick",
+            "repeat")
+PLACEHOLDERS = ("name", "subject", "connector", "to", "said", "message", "result")
 SPEAKER = "@speaker"  # voice_id: the triggering person's own voice (if they consented)
 
 _PLACEHOLDER = re.compile(r"\{(" + "|".join(PLACEHOLDERS) + r")\}")
