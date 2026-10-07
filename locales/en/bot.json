@@ -1,0 +1,78 @@
+{
+  "common.raw": "{text}",
+  "common.done": "✅ Done",
+  "common.failed": "❌ That didn't work, try again in a moment",
+  "common.not_in_voice": "❌ You (or the bot) need to be in a voice channel",
+  "common.voice_off": "❌ The bot's voice is turned off on this install",
+  "common.admins_only": "🔒 Only admins can do that",
+  "common.owner_only": "🔒 Only the bot's owner can do that",
+  "common.on": "on",
+  "common.off": "off",
+  "common.more": "… and {count} more (see the dashboard)",
+
+  "join.joined": "✅ Listening in {channel}",
+  "join.left": "👋 Left the call",
+  "join.notice": "👂 **{bot}** joined the call. It listens to what's said here to react with jokes and commands. Speech is processed on the owner's computer, not by an online service. {transcripts}",
+  "join.transcripts_off": "Nothing is written down.",
+  "join.transcripts_on": "📝 Transcripts are **on** in this server: the words of people who agreed are saved (`/transcripts` to choose, `/transcripts delete` to erase yours).",
+
+  "timer.range": "❌ Pick between 1 and 720 minutes",
+  "timer.set": "⏲️ I'll remind you in {said}",
+  "timer.cleared": "⏲️ All timers cleared",
+  "timer.row": "• {who}: {what} ({left} left)",
+  "timer.none": "No timers running",
+
+  "autojoin.on": "🤖 Auto-join is on: I join calls with 2+ people and leave when they empty",
+  "autojoin.off": "🤖 Auto-join is off",
+  "userclone.on": "🎭 Gags now answer in each person's own voice (for people who agreed)",
+  "userclone.off": "🎭 Gags answer in the bot's voice",
+
+  "consent.accept": "Accept",
+  "consent.decline": "No thanks",
+  "consent.not_for_you": "❌ This question is for someone else",
+  "consent.state.never_asked": "not asked yet",
+  "consent.state.pending": "waiting for your answer",
+  "consent.state.accepted": "accepted",
+  "consent.state.declined": "declined",
+  "consent.state.revoked": "withdrawn",
+
+  "consent.voice.ask": "🎙️ **{bot}** would like to save your voice so it can imitate you in jokes. It keeps about 10 seconds of what you say in calls plus a voice print, only on the bot owner's computer. You can delete it any time with `/voice delete`.",
+  "consent.voice.accepted": "✅ Thanks! Your voice will be saved. `/voice delete` erases it whenever you want.",
+  "consent.voice.declined": "👍 Got it, nothing of your voice will be kept.",
+
+  "consent.transcripts.ask": "📝 This server writes down what's said in calls (transcripts), only for people who agree. Saved on the bot owner's computer. You can erase yours any time with `/transcripts delete`. Is it OK to save what **you** say?",
+  "consent.transcripts.accepted": "✅ OK, your words will be saved in servers with transcripts on. `/transcripts delete` erases them.",
+  "consent.transcripts.declined": "👍 Got it, nothing you say will be written down.",
+
+  "voice.status": "🎙️ Voice consent: **{consent}** · Your voice: **{voice}**",
+  "voice.state.no_samples": "not enough heard yet",
+  "voice.state.draft": "collecting",
+  "voice.state.queued": "waiting to be built",
+  "voice.state.building": "building",
+  "voice.state.ready": "ready",
+  "voice.state.failed": "failed (try /voice refresh)",
+  "voice.deleted": "🗑️ Your saved voice was deleted and won't be collected anymore",
+  "voice.nothing_saved": "🗑️ Nothing was saved; your voice won't be collected",
+  "voice.nothing_to_rebuild": "❌ No voice to rebuild yet: agree with `/voice optin`, then talk a bit",
+  "voice.rebuilding": "🔄 Rebuilding your voice from your latest sentences",
+
+  "transcripts.status": "📝 Transcripts in this server: **{server}** · Your choice: **{consent}**",
+  "transcripts.on": "📝 Transcripts are on. Everyone was told, and only people who accept are written down.",
+  "transcripts.on_unannounced": "📝 Transcripts are on, but I couldn't post the notice anywhere (give me a channel I can write in). People will be asked when they speak.",
+  "transcripts.off": "📝 Transcripts are off. Nothing new will be written down.",
+  "transcripts.broadcast_on": "📝 **Transcripts are now ON in this server.** {bot} will write down what's said in calls, but **only for people who accept below**. Saved on the bot owner's computer. Change your mind any time: `/transcripts delete` erases everything of yours.",
+  "transcripts.broadcast_off": "📝 Transcripts are now **off** in this server. Nothing new will be written down.",
+  "transcripts.deleted": "🗑️ Deleted {count} saved lines of yours. Your words won't be written down unless you accept again (`/transcripts optin`).",
+
+  "language.current": "🌐 Language here: **{language}** (available: {available})",
+  "language.unknown": "❌ No translation for \"{language}\". Available: {available}",
+  "language.set": "🌐 Language set to **{language}**",
+
+  "nicknames.row": "• {display} — `{id}` → \"{said}\"",
+  "nicknames.none": "{name} (no nickname)",
+  "nicknames.nobody": "Nobody here",
+
+  "record.on": "⏺️ Recording your own speech to testdata/ (only yours)",
+  "record.off": "⏹️ Not recording",
+  "reset.restarting": "🔄 Restarting"
+}

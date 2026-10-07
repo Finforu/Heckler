@@ -1,0 +1,27 @@
+discord.py[voice]==2.7.1
+davey==0.1.6
+discord-ext-voice-recv==0.5.2a179
+python-dotenv
+
+# Speech-to-text: Parakeet v3 via sherpa-onnx (default), faster-whisper (STT_ENGINE=whisper)
+sherpa-onnx==1.13.6
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+# faster-whisper 1.2.1 passes an argument PyAV 16+ removed
+av==15.1.0
+
+# Voice cloning: OmniVoice 0.2.1 inference code is vendored in ./omnivoice
+# (Apache-2.0, see omnivoice/NOTICE.md). torch pins the cuDNN/cuBLAS that
+# CTranslate2 also uses.
+torch==2.8.0
+torchaudio==2.8.0
+transformers==5.15.1
+accelerate==1.14.0
+pydub
+soundfile
+
+# Storage (YAML packs); the dashboard uses aiohttp, which discord.py already installs
+pyyaml
+
+# Resampling (speech-to-text input, Discord output)
+soxr==1.1.0

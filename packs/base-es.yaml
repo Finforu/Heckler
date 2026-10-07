@@ -1,0 +1,90 @@
+# Paquete base en español: lo que recibe un servidor nuevo (setting content.starter_pack = base-es).
+# Comandos de voz, respuestas fijas, saludos neutrales y unos gags de ejemplo (apagados).
+# Edítalo desde el panel, o cópialo y cárgalo con
+#   python packs.py import --guild <id del servidor> packs/mi-paquete.yaml
+# El formato está descrito al principio de packs.py.
+
+format: 1
+
+settings:
+  voices.preview_text: ¡Hola! Así suena mi voz.
+
+reactions:
+
+# ── Comandos de voz: se dicen después del nombre del bot ("Oye bot, vete") ──
+
+- name: leave
+  command: [desconectate, desconecta, vete, largate, salte, sal del canal, chao, adios, leave]
+  do: leave
+
+- name: stop
+  command: [para, detente, callate, silencio, basta, stop]
+  do: stop
+
+- name: timer
+  command: [recuerdame, avisame, temporizador, alarma, pon un timer, pon una alarma]
+  do: timer
+
+# ── Respuestas fijas ──
+
+- name: wake
+  event: wake
+  say: ['¿Sí?', Dime., '¿Qué necesitas?', Aquí estoy.]
+
+- name: ack
+  event: ack
+  say: [Listo., Hecho., Muy bien.]
+
+- name: leave
+  event: leave
+  say: ['Me voy, nos vemos.', Chao.]
+
+- name: unknown
+  event: unknown
+  say: ['¿Qué? No entendí.', '¿Puedes repetirlo?']
+
+- name: timer set
+  event: timer_set
+  say: Listo, te aviso en {said}.
+
+# Con mensaje dice el mensaje; sin mensaje, la siguiente.
+- name: timer ring (message)
+  event: timer_ring
+  say: '{name}, {message}.'
+
+- name: timer ring
+  event: timer_ring
+  say: '{name}, se acabó el tiempo: {said}.'
+
+# ── Saludos ──
+
+- name: hello
+  event: hello
+  say: ['Hola, {name}.', 'Llegó {name}.', 'Qué bueno verte, {name}.']
+
+- name: bye
+  event: bye
+  say: ['Chao, {name}.', 'Nos vemos, {name}.', 'Se fue {name}.']
+
+- name: arrival
+  event: arrival
+  say: [Hola a todos., Aquí estoy., Buenas.]
+
+# ── Gags de ejemplo (apagados: enabled: false). Actívalos o úsalos de modelo ──
+
+- name: buenas noches
+  phrase: [buenas noches, buena noche]
+  say: ['Buenas noches, {name}. Que descanses.', A dormir se ha dicho.]
+  enabled: false
+
+- name: tengo hambre
+  phrase: tengo hambre
+  say: [Yo también., 'Pide una pizza, {name}.']
+  enabled: false
+
+# "la taza de café" -> "No, la taza de chocolate."
+- name: café -> chocolate
+  swap: café
+  to: chocolate
+  say: No, {subject} {connector} {to}.
+  enabled: false

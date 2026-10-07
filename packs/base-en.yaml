@@ -1,0 +1,85 @@
+# English starter pack: what a new server gets with the setting content.starter_pack = base-en.
+# Voice commands, stock replies, neutral greetings and a few example gags (turned off).
+# Edit it in the dashboard, or copy it and load it with
+#   python packs.py import --guild <server id> packs/my-pack.yaml
+# The format is described at the top of packs.py.
+
+format: 1
+
+reactions:
+
+# ── Voice commands: said after the bot's name ("Hey bot, leave") ──
+
+- name: leave
+  command: [leave, disconnect, go away, get out, bye bye]
+  do: leave
+
+- name: stop
+  command: [stop, be quiet, quiet, silence, enough]
+  do: stop
+
+- name: timer
+  command: [remind me, set a timer, timer, alarm, set an alarm]
+  do: timer
+
+# ── Stock replies ──
+
+- name: wake
+  event: wake
+  say: ["Yes?", "What do you need?", "I'm listening.", "Here."]
+
+- name: ack
+  event: ack
+  say: ["Done.", "Okay.", "Got it."]
+
+- name: leave
+  event: leave
+  say: ["Bye, see you.", "I'm off."]
+
+- name: unknown
+  event: unknown
+  say: ["Sorry, I didn't get that.", "Can you say that again?"]
+
+- name: timer set
+  event: timer_set
+  say: "Okay, I'll remind you in {said}."
+
+# With a message it says the message; without one, the next reaction.
+- name: timer ring (message)
+  event: timer_ring
+  say: '{name}, {message}.'
+
+- name: timer ring
+  event: timer_ring
+  say: "{name}, time's up: {said}."
+
+# ── Greetings ──
+
+- name: hello
+  event: hello
+  say: ['Hi, {name}.', '{name} is here.', 'Good to see you, {name}.']
+
+- name: bye
+  event: bye
+  say: ['Bye, {name}.', 'See you, {name}.', '{name} left.']
+
+- name: arrival
+  event: arrival
+  say: ["Hi everyone.", "I'm here.", "Hello there."]
+
+# ── Example gags (turned off: enabled: false). Turn them on or use them as a model ──
+
+- name: good night
+  phrase: [good night, goodnight]
+  say: ["Good night, {name}. Sleep well.", "Off to bed then."]
+  enabled: false
+
+- name: "i'm hungry"
+  phrase: ["i'm hungry", "im hungry"]
+  say: ["Me too.", "Order a pizza, {name}."]
+  enabled: false
+
+- name: knock knock
+  phrase: knock knock
+  say: "Who's there?"
+  enabled: false

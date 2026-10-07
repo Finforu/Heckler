@@ -1,0 +1,78 @@
+{
+  "common.raw": "{text}",
+  "common.done": "✅ Listo",
+  "common.failed": "❌ No funcionó, inténtalo de nuevo en un momento",
+  "common.not_in_voice": "❌ Tú (o el bot) tienen que estar en un canal de voz",
+  "common.voice_off": "❌ La voz del bot está apagada en esta instalación",
+  "common.admins_only": "🔒 Solo los admins pueden hacer eso",
+  "common.owner_only": "🔒 Solo el dueño del bot puede hacer eso",
+  "common.on": "activado",
+  "common.off": "desactivado",
+  "common.more": "… y {count} más (míralos en el panel)",
+
+  "join.joined": "✅ Escuchando en {channel}",
+  "join.left": "👋 Salí de la llamada",
+  "join.notice": "👂 **{bot}** entró a la llamada. Escucha lo que se dice aquí para reaccionar con chistes y comandos. La voz se procesa en la computadora del dueño, no en un servicio en línea. {transcripts}",
+  "join.transcripts_off": "No se escribe nada.",
+  "join.transcripts_on": "📝 Las transcripciones están **activadas** en este servidor: se guardan las palabras de quien aceptó (`/transcripts` para elegir, `/transcripts delete` para borrar las tuyas).",
+
+  "timer.range": "❌ Elige entre 1 y 720 minutos",
+  "timer.set": "⏲️ Te aviso en {said}",
+  "timer.cleared": "⏲️ Todos los temporizadores borrados",
+  "timer.row": "• {who}: {what} (faltan {left})",
+  "timer.none": "No hay temporizadores",
+
+  "autojoin.on": "🤖 Auto-entrada activada: entro a llamadas con 2+ personas y salgo cuando se vacían",
+  "autojoin.off": "🤖 Auto-entrada desactivada",
+  "userclone.on": "🎭 Los chistes ahora responden con la voz de cada persona (de quien aceptó)",
+  "userclone.off": "🎭 Los chistes responden con la voz del bot",
+
+  "consent.accept": "Acepto",
+  "consent.decline": "No, gracias",
+  "consent.not_for_you": "❌ Esta pregunta es para otra persona",
+  "consent.state.never_asked": "todavía no se preguntó",
+  "consent.state.pending": "esperando tu respuesta",
+  "consent.state.accepted": "aceptado",
+  "consent.state.declined": "rechazado",
+  "consent.state.revoked": "retirado",
+
+  "consent.voice.ask": "🎙️ **{bot}** quiere guardar tu voz para poder imitarte en los chistes. Guarda unos 10 segundos de lo que dices en las llamadas y una huella de tu voz, solo en la computadora del dueño del bot. Puedes borrarla cuando quieras con `/voice delete`.",
+  "consent.voice.accepted": "✅ ¡Gracias! Tu voz se guardará. `/voice delete` la borra cuando quieras.",
+  "consent.voice.declined": "👍 Entendido, no se guardará nada de tu voz.",
+
+  "consent.transcripts.ask": "📝 Este servidor escribe lo que se dice en las llamadas (transcripciones), solo de quien acepta. Se guarda en la computadora del dueño del bot. Puedes borrar lo tuyo cuando quieras con `/transcripts delete`. ¿Está bien guardar lo que **tú** dices?",
+  "consent.transcripts.accepted": "✅ Listo, tus palabras se guardarán en los servidores con transcripciones activadas. `/transcripts delete` las borra.",
+  "consent.transcripts.declined": "👍 Entendido, no se escribirá nada de lo que digas.",
+
+  "voice.status": "🎙️ Permiso de voz: **{consent}** · Tu voz: **{voice}**",
+  "voice.state.no_samples": "todavía no te he escuchado lo suficiente",
+  "voice.state.draft": "recolectando",
+  "voice.state.queued": "en espera de construirse",
+  "voice.state.building": "construyéndose",
+  "voice.state.ready": "lista",
+  "voice.state.failed": "falló (prueba /voice refresh)",
+  "voice.deleted": "🗑️ Tu voz guardada se borró y ya no se recolectará",
+  "voice.nothing_saved": "🗑️ No había nada guardado; tu voz no se recolectará",
+  "voice.nothing_to_rebuild": "❌ Todavía no hay voz para reconstruir: acepta con `/voice optin` y habla un poco",
+  "voice.rebuilding": "🔄 Reconstruyendo tu voz con tus últimas frases",
+
+  "transcripts.status": "📝 Transcripciones en este servidor: **{server}** · Tu elección: **{consent}**",
+  "transcripts.on": "📝 Transcripciones activadas. Se avisó a todos, y solo se escribe a quien acepta.",
+  "transcripts.on_unannounced": "📝 Transcripciones activadas, pero no pude publicar el aviso en ningún lado (dame un canal donde pueda escribir). Se le preguntará a cada persona cuando hable.",
+  "transcripts.off": "📝 Transcripciones desactivadas. No se escribirá nada nuevo.",
+  "transcripts.broadcast_on": "📝 **Las transcripciones ahora están ACTIVADAS en este servidor.** {bot} escribirá lo que se dice en las llamadas, pero **solo de quienes acepten aquí abajo**. Se guarda en la computadora del dueño del bot. Puedes cambiar de idea cuando quieras: `/transcripts delete` borra todo lo tuyo.",
+  "transcripts.broadcast_off": "📝 Las transcripciones ahora están **desactivadas** en este servidor. No se escribirá nada nuevo.",
+  "transcripts.deleted": "🗑️ Se borraron {count} líneas tuyas. No se escribirá lo que digas a menos que vuelvas a aceptar (`/transcripts optin`).",
+
+  "language.current": "🌐 Idioma aquí: **{language}** (disponibles: {available})",
+  "language.unknown": "❌ No hay traducción para \"{language}\". Disponibles: {available}",
+  "language.set": "🌐 Idioma cambiado a **{language}**",
+
+  "nicknames.row": "• {display} — `{id}` → \"{said}\"",
+  "nicknames.none": "{name} (sin apodo)",
+  "nicknames.nobody": "No hay nadie",
+
+  "record.on": "⏺️ Grabando tu propia voz en testdata/ (solo la tuya)",
+  "record.off": "⏹️ Sin grabar",
+  "reset.restarting": "🔄 Reiniciando"
+}
